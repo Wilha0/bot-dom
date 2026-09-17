@@ -1,0 +1,30 @@
+name: Bot DOM Salvador
+
+on:
+  schedule:
+    # Seg–sex, de hora em hora das 6h às 12h (horário de Brasília = UTC-3)
+    - cron: "0 9-15 * * 1-5"
+  workflow_dispatch: {}   # permite rodar manualmente
+
+permissions:
+  contents: write
+
+jobs:
+  rodar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests beautifulsoup4 pdfplumber
+      - run: python bot_dom.py
+        env:
+          GCHAT_WEBHOOK_URL: ${{ secrets.GCHAT_WEBHOOK_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - name: Salvar última edição enviada
+        run: |
+          git config user.name "bot-dom"
+          git config user.email "bot-dom@users.noreply.github.com"
+          git add ultima_edicao.txt 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "Edição enviada" && git push
