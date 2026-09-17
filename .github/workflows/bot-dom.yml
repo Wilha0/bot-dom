@@ -1,10 +1,16 @@
 name: Bot DOM Salvador
 
 on:
-  schedule:
-    # Seg–sex, de hora em hora das 6h às 12h (horário de Brasília = UTC-3)
-    - cron: "0 9-15 * * 1-5"
-  workflow_dispatch: {}   # permite rodar manualmente
+      schedule:
+    # Seg–sex, de hora em hora das 11h às 20h (horário de Brasília = UTC-3)
+    - cron: "0 14-23 * * 1-5"
+    # Seg–sex, às 21h (em UTC já é 00h do dia seguinte: ter–sáb)
+    - cron: "0 0 * * 2-6"
+  workflow_dispatch:
+    inputs:
+      forcar_envio:
+        description: "Reenviar a edição mesmo que já tenha sido enviada? (sim/nao)"
+        default: "nao"
 
 permissions:
   contents: write
@@ -22,9 +28,10 @@ jobs:
         env:
           GCHAT_WEBHOOK_URL: ${{ secrets.GCHAT_WEBHOOK_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FORCAR_ENVIO: ${{ github.event.inputs.forcar_envio }}
       - name: Salvar última edição enviada
         run: |
           git config user.name "bot-dom"
           git config user.email "bot-dom@users.noreply.github.com"
           git add ultima_edicao.txt 2>/dev/null || true
-          git diff --cached --quiet || git commit -m "Edição enviada" && git push
+          git diff --cached --quiet || (git commit -m "Edição enviada" && git push)
