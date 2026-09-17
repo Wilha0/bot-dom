@@ -71,7 +71,7 @@ DESCARTAR = [
 # Tópicos da mensagem: (chave, título, regex do cabeçalho do ato)
 TOPICOS = [
     ("contrato", "📝 *Contratos, aditivos e apostilamentos*",
-     r"(EXTRATO|RESUMO)\s+(D[OAE]S?\s+)?(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?(CONTRATO|TERMO|ADITIVO|APOSTILA|CONV[ÊE]NIO|ACORDO|RESCIS)|(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?TERMO\s+(ADITIVO|DE\s+(APOSTILA|PRORROGA|RESCIS|RERRATIFICA))|APOSTILAMENTO|RESCIS[ÃA]O\s+(UNILATERAL|AMIG|CONTRATUAL|DO\s+CONTRATO)"),
+     r"(EXTRATO|RESUMO)\s+(D[OAE]S?\s+)?(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?(CONTRATO|TERMO|ADITIVO|APOSTILA|CONV[ÊE]NIO|ACORDO|RESCIS)|(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?TERMO\s+(ADITIVO|DE\s+(APOSTILA|PRORROGA|RESCIS|RERRATIFICA))|APOSTILAMENTO|RESCIS[ÃA]O\s+(UNILATERAL|AMIG|CONTRATUAL|DO\s+CONTRATO)|RETIFICA[ÇC][ÃA]O\s+(DE|DO|DA)?\s*(RESUMO|EXTRATO|TERMO|CONTRATO)"),
     ("resultado", "✅ *Resultados, homologações e atas*",
      r"(AVISO\s+DE\s+|TERMO\s+DE\s+|EXTRATO\s+D[AE]\s+)?(HOMOLOGA|ADJUDICA|RATIFICA|RESULTADO)|(EXTRATO\s+D[AE]\s+)?ATA\s+DE\s+REGISTRO\s+DE\s+PRE"),
     ("licitacao", "📢 *Licitações, cotações e editais*",
@@ -190,10 +190,15 @@ def separar_atos(linhas):
                 extras += 1
             nome = re.sub(r"\s*[-–]\s*([A-Z]{2,12})$", r" - \1", nome)
             orgao = re.sub(r"\s+", " ", nome)
+            atual = None
             i += 1
             continue
+        # Dentro de uma retificação, os títulos citados não abrem um novo ato
+        dentro_retificacao = (atual and re.search(r"RETIFICA", atual["titulo"], re.I)
+                              and len(atual["linhas"]) < 15
+                              and not any(re.match(r"Salvador,\s+\d", x) for x in atual["linhas"]))
         # Início de um ato
-        if maiusculo(l[:60]):
+        if maiusculo(l[:60]) and not dentro_retificacao:
             for chave, _, rx in TOPICOS_RE:
                 if rx.match(l):
                     titulo = l
@@ -322,7 +327,13 @@ def montar_com_ia(atos):
         "Se for rescisão, prorrogação, suspensão, revogação ou anulação, acrescente ' · *rescisão*' (etc.). "
         "Termine com _(pág. N)_\n"
         "  Objeto: resumo do objeto em no máximo 200 caracteres\n"
-        "  Empresa · Valor · Prazo/data da sessão, só os que existirem, separados por ' · '\n"
+        "  Empresa · Valor · uma única data, só os que existirem, separados por ' · '\n"
+        "- Datas: no máximo UMA por item, a mais útil para quem acompanha (sessão de abertura, "
+        "prazo final de propostas ou vigência). Nunca inclua data de assinatura, de publicação, "
+        "de homologação, nem etapas intermediárias (envio de propostas, início da disputa). "
+        "Escreva assim: 'Sessão 30/09/2026 às 9h30' ou 'Propostas até 21/09/2026'.\n"
+        "- Retificações: um único item, dizendo em uma linha o que mudou (de X para Y) e citando "
+        "a publicação corrigida. Nunca separe 'onde se lê' e 'leia-se' em itens diferentes.\n"
         "- Não inclua telefones, e-mails, fundamentação legal nem nomes de servidores.\n"
         "- Separe itens com uma linha em branco. Use *negrito* e _itálico_; sem # e sem tabelas.\n"
         "- Não invente dados. Se nada for relevante, responda apenas: Nenhum ato de TIC identificado.\n\n"
