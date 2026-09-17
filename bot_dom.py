@@ -388,7 +388,9 @@ def gerar_mensagem(url_pdf, conteudo_pdf):
             corpo = montar_por_regras(atos) + "\n\n_⚠️ Resumo sem IA: a IA não respondeu nesta edição._"
     else:
         corpo = montar_por_regras(atos)
-    qtd = f" · {len(atos)} ato(s) de TIC" if atos else ""
+    # Conta os itens da mensagem final (depois do filtro da IA, se houver)
+    n = len(re.findall(r"^\s*•", corpo, re.M))
+    qtd = f" · {n} ato(s) de TIC" if n else ""
     return f"📰 *DOM Salvador – {edicao} – {data}*{qtd}\n{url_pdf}\n\n{corpo}"
 
 
