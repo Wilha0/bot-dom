@@ -11,6 +11,9 @@ on:
       forcar_envio:
         description: "Reenviar a edição mesmo que já tenha sido enviada? (sim/nao)"
         default: "nao"
+      diagnostico:
+        description: "Mostrar o motivo de cada item? (sim/nao)"
+        default: "nao"
 
 permissions:
   contents: write
@@ -27,8 +30,11 @@ jobs:
       - run: python bot_dom.py
         env:
           GCHAT_WEBHOOK_URL: ${{ secrets.GCHAT_WEBHOOK_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           FORCAR_ENVIO: ${{ github.event.inputs.forcar_envio }}
+          DIAGNOSTICO: ${{ github.event.inputs.diagnostico }}
       - name: Salvar última edição enviada
         run: |
           git config user.name "bot-dom"
