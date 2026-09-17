@@ -1,10 +1,10 @@
 name: Bot DOM Salvador
 
 on:
-      schedule:
-    # Seg–sex, de hora em hora das 11h às 20h (horário de Brasília = UTC-3)
+  schedule:
+    # Seg–sex, de hora em hora das 11h às 20h (horário de Brasília)
     - cron: "0 14-23 * * 1-5"
-    # Seg–sex, às 21h (em UTC já é 00h do dia seguinte: ter–sáb)
+    # Seg–sex, às 21h (em UTC já é 00h do dia seguinte)
     - cron: "0 0 * * 2-6"
   workflow_dispatch:
     inputs:
