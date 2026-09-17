@@ -336,7 +336,10 @@ def montar_com_ia(atos):
         "a publicação corrigida. Nunca separe 'onde se lê' e 'leia-se' em itens diferentes.\n"
         "- Não inclua telefones, e-mails, fundamentação legal nem nomes de servidores.\n"
         "- Separe itens com uma linha em branco. Use *negrito* e _itálico_; sem # e sem tabelas.\n"
-        "- Não invente dados. Se nada for relevante, responda apenas: Nenhum ato de TIC identificado.\n\n"
+        "- Não invente dados.\n"
+        "- Não escreva frases de fechamento, observações finais nem 'Nenhum outro ato de TIC "
+        "identificado'. A mensagem termina no último item.\n"
+        "- Se NENHUM ato for relevante, responda apenas: Nenhum ato de TIC identificado.\n\n"
         + material[:150000])
     if os.environ.get("OPENAI_API_KEY"):
         r = requests.post(
@@ -391,6 +394,7 @@ def gerar_mensagem(url_pdf, conteudo_pdf):
     elif os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"):
         try:
             corpo = montar_com_ia(atos)
+            corpo = re.sub(r"\n+\s*[•*_ ]*Nenhum (outro|demais).{0,60}$", "", corpo.strip(), flags=re.I)
             if not corpo:
                 raise ValueError("resposta vazia da IA")
         except Exception as e:
