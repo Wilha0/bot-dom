@@ -11,8 +11,11 @@ O que faz:
 
 Variáveis de ambiente:
   GCHAT_WEBHOOK_URL   (obrigatória) URL do webhook do espaço
-  ANTHROPIC_API_KEY   (opcional) para resumo com IA
+  OPENAI_API_KEY      (opcional) chave da OpenAI (sk-proj-...) para resumo com IA
+  OPENAI_MODEL        (opcional) modelo da OpenAI; padrão: gpt-5-mini
+  ANTHROPIC_API_KEY   (opcional) chave da Anthropic (sk-ant-...), alternativa à OpenAI
   FORCAR_ENVIO        (opcional) "sim" reenvia a edição mesmo que já tenha sido enviada
+  DIAGNOSTICO         (opcional) "sim" mostra o motivo de cada item e lista todos os atos no log
 """
 import os, re, io
 from urllib.parse import urljoin
@@ -33,8 +36,8 @@ ORGAOS_SEMPRE = ["SEMIT", "SMART"]
 
 # Termos que indicam tecnologia
 TERMOS_TIC = [
-    r"tecnologia da informa", r"\bTIC\b", r"software", r"\bSaaS\b", r"licen[çc]as? de uso",
-    r"licenciamento de (software|uso|licen)", r"nuvem", r"\bcloud\b", r"data ?center",
+    r"tecnologia da informa", r"\bTIC\b", r"software", r"\bSaaS\b", r"licen[çc]as? de (uso de )?(software|programas?)", r"cess[ãa]o de (direito de )?uso de (software|sistema)",
+    r"licenciamento de (software|licen[çc]as)", r"nuvem", r"\bcloud\b", r"data ?center",
     r"desenvolvimento de sistemas?", r"sistemas? (de informa|informatizad|web)", r"sistema de gerenciamento",
     r"link(s)? de (internet|dados|comunica)", r"\binternet\b", r"fibra [óo]ptica", r"redes? de dados",
     r"computador", r"notebook", r"microcomputador", r"servidor(es)? de (rede|dados|aplica)",
@@ -55,6 +58,8 @@ FALSOS_POSITIVOS = [
     r"rede de (aten[çc][ãa]o|sa[úu]de|ensino)", r"sistema de registro de pre[çc]os?",
     r"sistema eletr[ôo]nico de (informa[çc][õo]es|compras|licita)", r"compras\.gov",
     r"sess[ãa]o p[úu]blica (eletr[ôo]nica|virtual)", r"portal de compras",
+    r"licen[çc]a de uso de (espa[çc]o|[áa]rea|equipamento urbano)", r"servi[çc]os? reprogr[áa]fic\w*",
+    r"(por meio|atrav[ée]s) (da|do) (internet|plataforma|sistema)", r"endere[çc]o eletr[ôo]nico", r"s[íi]tio eletr[ôo]nico",
 ]
 
 # Atos descartados mesmo que citem tecnologia
@@ -66,11 +71,11 @@ DESCARTAR = [
 # Tópicos da mensagem: (chave, título, regex do cabeçalho do ato)
 TOPICOS = [
     ("contrato", "📝 *Contratos, aditivos e apostilamentos*",
-     r"(EXTRATO|RESUMO)\s+(D[OAE]S?\s+)?(CONTRATO|TERMO\s+ADITIVO|ADITIVO|APOSTILA|CONV[ÊE]NIO|ACORDO|TERMO\s+DE\s+(COLABORA|FOMENTO|COOPERA))|TERMO\s+ADITIVO|APOSTILAMENTO|TERMO\s+DE\s+APOSTILA"),
+     r"(EXTRATO|RESUMO)\s+(D[OAE]S?\s+)?(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?(CONTRATO|TERMO|ADITIVO|APOSTILA|CONV[ÊE]NIO|ACORDO|RESCIS)|(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?TERMO\s+(ADITIVO|DE\s+(APOSTILA|PRORROGA|RESCIS|RERRATIFICA))|APOSTILAMENTO|RESCIS[ÃA]O\s+(UNILATERAL|AMIG|CONTRATUAL|DO\s+CONTRATO)"),
     ("resultado", "✅ *Resultados, homologações e atas*",
      r"(AVISO\s+DE\s+|TERMO\s+DE\s+|EXTRATO\s+D[AE]\s+)?(HOMOLOGA|ADJUDICA|RATIFICA|RESULTADO)|(EXTRATO\s+D[AE]\s+)?ATA\s+DE\s+REGISTRO\s+DE\s+PRE"),
     ("licitacao", "📢 *Licitações, cotações e editais*",
-     r"AVISO\s+DE\s+(LICITA|PREG|CONCORR|COTA|DISPENSA|CHAMAMENTO|INTEN|SESS|REABERTURA|ADIAMENTO|SUSPENS|RETIFICA|REVOGA|ANULA|CREDENCIA)|AVISO\s+DE\s+CONTRATA|EDITAL|CHAMAMENTO\s+P[ÚU]BLICO|INTEN[ÇC][ÃA]O\s+DE\s+REGISTRO|DISPENSA\s+(DE\s+LICITA|ELETR)|INEXIGIBILIDADE"),
+     r"AVISO\s+DE\s+(LICITA|PREG|CONCORR|COTA|DISPENSA|CHAMAMENTO|INTEN|SESS|REABERTURA|ADIAMENTO|SUSPENS|RETIFICA|REVOGA|ANULA|CREDENCIA|CONVOCA)|AVISO\s+DE\s+CONTRATA|EDITAL|CHAMAMENTO\s+P[ÚU]BLICO|INTEN[ÇC][ÃA]O\s+DE\s+REGISTRO|DISPENSA\s+(DE\s+LICITA|ELETR)|INEXIGIBILIDADE"),
     ("outros", "📌 *Outros atos*",
      r"PORTARIA\s+N|DECRETO\s+N|RESOLU[ÇC][ÃA]O\s+N|INSTRU[ÇC][ÃA]O\s+NORMATIVA|EXTRATO\b|AVISO\b|DESPACHO"),
 ]
@@ -81,6 +86,7 @@ RE_TIC = re.compile("|".join(TERMOS_TIC), re.I)
 RE_FALSO = re.compile("|".join(FALSOS_POSITIVOS), re.I)
 RE_DESCARTAR = re.compile("|".join(DESCARTAR), re.I)
 RE_SEMPRE = re.compile(r"\b(" + "|".join(ORGAOS_SEMPRE) + r")\b")
+RE_PROCESSO_SEMPRE = re.compile(r"PROCESSO[^:\d]{0,15}:?\s*[\d./]+\s*[-–/]\s*(" + "|".join(ORGAOS_SEMPRE) + r")\b", re.I)
 TOPICOS_RE = [(k, t, re.compile(r"^\s*(" + r + ")")) for k, t, r in TOPICOS]
 
 RE_ORGAO = re.compile(
@@ -174,10 +180,15 @@ def separar_atos(linhas):
         # Cabeçalho de órgão (pode quebrar a sigla na linha seguinte)
         if maiusculo(l) and len(l) < 130 and not re.search(r"\d", l) and RE_ORGAO.match(l):
             nome = l
-            if i + 1 < len(linhas) and re.fullmatch(r"[-–]?\s*[A-Z]{2,12}", linhas[i + 1][1]) \
-                    and (nome.endswith(("-", "–")) or linhas[i + 1][1].startswith(("-", "–"))):
-                nome = nome.rstrip(" -–") + " - " + linhas[i + 1][1].lstrip(" -–")
+            extras = 0
+            while (extras < 3 and i + 1 < len(linhas) and not re.search(r"-\s*[A-Z]{2,12}$", nome)
+                   and maiusculo(linhas[i + 1][1]) and len(linhas[i + 1][1]) < 90
+                   and not re.search(r"\d", linhas[i + 1][1])
+                   and not any(rx.match(linhas[i + 1][1]) for _, _, rx in TOPICOS_RE)):
+                nome = nome.rstrip() + " " + linhas[i + 1][1].strip()
                 i += 1
+                extras += 1
+            nome = re.sub(r"\s*[-–]\s*([A-Z]{2,12})$", r" - \1", nome)
             orgao = re.sub(r"\s+", " ", nome)
             i += 1
             continue
@@ -201,7 +212,8 @@ def separar_atos(linhas):
         i += 1
     for a in atos:
         a["texto"] = re.sub(r"\s+", " ", " ".join(a["linhas"])).strip()
-        a["sigla"] = (re.search(r"-\s*([A-Z]{2,12})$", a["orgao"]) or [None, a["orgao"][:40]])[1]
+        m = re.search(r"-\s*([A-Z]{2,12})$", a["orgao"])
+        a["sigla"] = m.group(1) if m else (a["orgao"].title()[:45] or "Órgão não identificado")
     return atos
 
 
@@ -209,9 +221,13 @@ def eh_relevante(ato):
     completo = ato["titulo"] + " " + ato["texto"]
     if RE_DESCARTAR.search(completo):
         return False
-    if ato["topico"] != "outros" and (RE_SEMPRE.search(ato["orgao"]) or RE_SEMPRE.search(completo)):
+    if ato["topico"] != "outros" and (RE_SEMPRE.search(ato["orgao"]) or RE_PROCESSO_SEMPRE.search(completo)):
+        ato["termo"] = "órgão " + ", ".join(ORGAOS_SEMPRE)
         return True
-    return bool(RE_TIC.search(RE_FALSO.sub(" ", completo)))
+    termos = {m.group(0).lower() for m in RE_TIC.finditer(RE_FALSO.sub(" ", completo))}
+    ato["termo"] = ", ".join(sorted(termos))
+    # "Outros atos" (portarias, decretos...) exigem ao menos 2 termos diferentes
+    return len(termos) >= (2 if ato["topico"] == "outros" else 1)
 
 
 # ------------------------------ RESUMO -------------------------------------
@@ -245,10 +261,19 @@ def resumir_ato(a):
         or campo(r"(?:tem por (?:objeto|finalidade)|objetivando a?|visando a?)\s+(.+?)(?:[.;]\s|$)", t) \
         or campo(r"(contrata[çc][ãa]o de .+?)(?:[.;]\s|,\s+com a abertura|$)", t)
     empresa = campo(r"(?:CONTRATAD[AO]|EMPRESA|FORNECEDOR|ADJUDICAT[ÁA]RI[AO]|VENCEDOR[A]?)\s*[:\-–]\s*(.+?)(?=,|\s+CNPJ|\s+-\s|\.\s|;|$)", t, 90)
-    valor = campo(r"(R\$\s?[\d.]+,\d{2})", t, 30)
+    valor = campo(r"VALOR[^:R]{0,30}:?\s*(R\$\s?[\d.]+,\d{2})", t, 30) \
+        or campo(r"valor (?:total|global|estimado|mensal|anual)[^R]{0,20}(R\$\s?[\d.]+,\d{2})", t, 30) \
+        or campo(r"(R\$\s?[\d.]+,\d{2})", t, 30)
     prazo = campo(r"((?:at[ée] o dia|abertura da sess[ãa]o no dia|sess[ãa]o p[úu]blica (?:no dia|em))\s+\d{1,2}(?:/\d{2}/\d{4}| de \w+ de \d{4})(?:,? [àa]s \d{1,2}[:h]\d{0,2}h?)?)", t, 70)
 
-    linha = f"• *{a['sigla']}* – {titulo_legivel(a['titulo'])} _(pág. {a['pagina']})_"
+    natureza = ""
+    if re.search(r"rescis", t + a["titulo"], re.I):
+        natureza = " · *rescisão*"
+    elif re.search(r"prorroga", t + a["titulo"], re.I):
+        natureza = " · prorrogação"
+    linha = f"• *{a['sigla']}* – {titulo_legivel(a['titulo'])}{natureza} _(pág. {a['pagina']})_"
+    if os.environ.get("DIAGNOSTICO") == "sim":
+        linha += f"\n   🔎 _motivo: {a.get('termo', '')}_"
     det = []
     if objeto: det.append(f"Objeto: {objeto}")
     if empresa: det.append(f"Empresa: {empresa}")
@@ -274,6 +299,7 @@ def montar_por_regras(atos):
 
 
 def montar_com_ia(atos):
+    """Usa OpenAI (OPENAI_API_KEY) ou Anthropic (ANTHROPIC_API_KEY), o que estiver cadastrado."""
     material = "\n\n".join(
         f"[{i}] TIPO: {a['topico']} | ÓRGÃO: {a['orgao']} | PÁGINA: {a['pagina']}\n{a['titulo']}\n{a['texto'][:3000]}"
         for i, a in enumerate(atos, 1))
@@ -292,6 +318,18 @@ def montar_com_ia(atos):
         "- Formatação do Google Chat: *negrito*, _itálico_. Sem títulos markdown (#), sem tabelas.\n"
         "- Não invente dados. Se nada for relevante, responda apenas: Nenhum ato de TIC identificado.\n\n"
         + material[:150000])
+    if os.environ.get("OPENAI_API_KEY"):
+        r = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
+                     "Content-Type": "application/json"},
+            json={"model": os.environ.get("OPENAI_MODEL") or "gpt-5-mini",
+                  "max_completion_tokens": 8000,
+                  "messages": [{"role": "user", "content": prompt}]},
+            timeout=300)
+        r.raise_for_status()
+        return (r.json()["choices"][0]["message"]["content"] or "").strip()
+
     r = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01",
@@ -322,11 +360,23 @@ def enviar_chat(texto):
 
 def gerar_mensagem(url_pdf, conteudo_pdf):
     edicao, data = dados_da_edicao(url_pdf)
-    atos = [a for a in separar_atos(ler_pdf(conteudo_pdf)) if eh_relevante(a)]
+    todos = separar_atos(ler_pdf(conteudo_pdf))
+    atos = [a for a in todos if eh_relevante(a)]
+    if os.environ.get("DIAGNOSTICO") == "sim":
+        print(f"=== DIAGNÓSTICO: {len(todos)} atos lidos, {len(atos)} selecionados ===")
+        for a in todos:
+            print(f"[{'X' if a in atos else ' '}] pág {a['pagina']} | {a['topico']} | {a['orgao'][:50]} | {a['titulo'][:70]} | {a.get('termo','')}")
     if not atos:
         corpo = "Nenhum ato de TIC identificado nesta edição."
-    elif os.environ.get("ANTHROPIC_API_KEY"):
-        corpo = montar_com_ia(atos)
+    elif os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"):
+        try:
+            corpo = montar_com_ia(atos)
+            if not corpo:
+                raise ValueError("resposta vazia da IA")
+        except Exception as e:
+            # Se a IA falhar (ex.: créditos acabaram), envia o resumo por regras
+            print(f"AVISO: IA indisponível ({e}). Usando resumo por regras.")
+            corpo = montar_por_regras(atos) + "\n\n_⚠️ Resumo sem IA: a IA não respondeu nesta edição._"
     else:
         corpo = montar_por_regras(atos)
     qtd = f" · {len(atos)} ato(s) de TIC" if atos else ""
