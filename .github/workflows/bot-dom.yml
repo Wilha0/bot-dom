@@ -35,3 +35,9 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           FORCAR_ENVIO: ${{ github.event.inputs.forcar_envio }}
           DIAGNOSTICO: ${{ github.event.inputs.diagnostico }}
+      - name: Salvar última edição enviada
+        run: |
+          git config user.name "bot-dom"
+          git config user.email "bot-dom@users.noreply.github.com"
+          git add ultima_edicao.txt 2>/dev/null || true
+          git diff --cached --quiet || (git commit -m "Edição enviada" && git push)
