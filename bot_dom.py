@@ -17,7 +17,7 @@ Variáveis de ambiente:
   FORCAR_ENVIO        (opcional) "sim" reenvia a edição mesmo que já tenha sido enviada
   DIAGNOSTICO         (opcional) "sim" mostra o motivo de cada item e lista todos os atos no log
 """
-import os, re, io
+import os, re, io, time
 from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
@@ -105,9 +105,27 @@ RE_CABECALHO = [
 
 # ------------------------------- COLETA ------------------------------------
 
+class SiteIndisponivel(Exception):
+    pass
+
+
+def baixar(url, timeout=60):
+    """Baixa uma URL tentando até 3 vezes; se o site não responder, avisa sem quebrar."""
+    ultimo_erro = None
+    for tentativa in range(3):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=timeout)
+            r.raise_for_status()
+            return r
+        except requests.RequestException as e:
+            ultimo_erro = e
+            time.sleep(20)
+    raise SiteIndisponivel(f"{url}: {ultimo_erro}")
+
+
 def achar_pdf_do_dia():
     """Procura na página inicial do DOM o link do PDF da edição mais recente."""
-    html = requests.get(DOM_HOME, headers=HEADERS, timeout=60).text
+    html = baixar(DOM_HOME).text
     soup = BeautifulSoup(html, "html.parser")
     links = [urljoin(DOM_HOME, a["href"]) for a in soup.find_all("a", href=True)
              if ".pdf" in a["href"].lower()]
@@ -410,6 +428,14 @@ def gerar_mensagem(url_pdf, conteudo_pdf):
 
 
 def main():
+    try:
+        executar()
+    except SiteIndisponivel as e:
+        # Instabilidade do site do DOM: encerra sem erro; a próxima verificação tenta de novo
+        print(f"Site do DOM indisponível no momento. Nova tentativa na próxima verificação.\n{e}")
+
+
+def executar():
     url_pdf = achar_pdf_do_dia()
     if not url_pdf:
         print("PDF não encontrado.")
@@ -418,7 +444,7 @@ def main():
     if url_pdf == ultima and os.environ.get("FORCAR_ENVIO") != "sim":
         print("Edição já enviada.")
         return
-    conteudo = requests.get(url_pdf, headers=HEADERS, timeout=180).content
+    conteudo = baixar(url_pdf, timeout=180).content
     mensagem = gerar_mensagem(url_pdf, conteudo)
     enviar_chat(mensagem)
     with open(STATE_FILE, "w") as f:
