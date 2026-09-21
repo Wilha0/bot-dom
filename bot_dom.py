@@ -94,6 +94,10 @@ RE_ORGAO = re.compile(
     r"COMPANHIA|AG[ÊE]NCIA|DIRETORIA|GUARDA CIVIL|OUVIDORIA|GABINETE DO PREFEITO|GABINETE DO VICE|"
     r"TRANSALVADOR|LIMPURB|DESAL|COGEL|SALTUR|FUNDA[ÇC][ÃA]O GREGÓRIO)[A-ZÀ-Ú ,\-–/]*$"
 )
+# Cabeçalho de órgão em letras mistas (ex.: "Companhia Salvador Cidade Inteligente - SMART")
+RE_ORGAO_MISTO = re.compile(
+    r"^(Companhia|Secretaria|Superintend[êe]ncia|Funda[çc][ãa]o|Empresa|Ag[êe]ncia|Controladoria|"
+    r"Procuradoria|Casa Civil|Gabinete do Prefeito)\b[^.;:]{5,110}\s[-–]\s[A-Z]{2,12}$")
 RE_CABECALHO = [
     re.compile(r"^DI[ÁA]RIO OFICIAL DO\b.*$"), re.compile(r"^SALVADOR-BAHIA\b.*$"),
     re.compile(r"^(SEGUNDA|TER[ÇC]A|QUARTA|QUINTA|SEXTA|S[ÁA]BADO|DOMINGO)[- A-ZÀ-Ú]*\d{1,2} (A \d{1,2} )?DE [A-ZÇ]+ DE \d{4}.*$"),
@@ -196,7 +200,8 @@ def separar_atos(linhas):
     while i < len(linhas):
         pag, l = linhas[i]
         # Cabeçalho de órgão (pode quebrar a sigla na linha seguinte)
-        if maiusculo(l) and len(l) < 130 and not re.search(r"\d", l) and RE_ORGAO.match(l):
+        if len(l) < 130 and not re.search(r"\d", l) and \
+                ((maiusculo(l) and RE_ORGAO.match(l)) or RE_ORGAO_MISTO.match(l)):
             nome = l
             extras = 0
             while (extras < 3 and i + 1 < len(linhas) and not re.search(r"-\s*[A-Z]{2,12}$", nome)
@@ -330,11 +335,18 @@ def montar_com_ia(atos):
         "Você recebe atos do Diário Oficial do Município de Salvador pré-selecionados por "
         "tratarem de tecnologia. Monte um apanhado para uma equipe de contratações de TIC.\n"
         "Regras de seleção:\n"
-        "- Descarte atos sem relação real com tecnologia, exceto contratos, licitações e "
-        "resultados cujo órgão responsável seja a SEMIT/SMART, que ficam sempre.\n"
-        "- O campo ÓRGÃO foi detectado automaticamente e pode estar errado. Se o texto do ato "
-        "indicar outro órgão responsável (ex.: 'PREGÃO ELETRÔNICO - SEMGE', 'PROCESSO Nº ...-SMED', "
-        "e-mail institucional, assinatura do secretário), use o órgão indicado no texto.\n"
+        "- PRIMEIRO confirme o órgão responsável. O campo ÓRGÃO foi detectado automaticamente e "
+        "pode estar errado. Se o texto indicar outro órgão (ex.: 'PREGÃO ELETRÔNICO - SEMGE', "
+        "'PROCESSO Nº ...-SMED', e-mail institucional, assinatura, 'políticas públicas da SPMJ'), "
+        "use o órgão indicado no texto.\n"
+        "- DEPOIS decida: mantenha o ato se o OBJETO for de tecnologia (software, sistemas, "
+        "infraestrutura de TI, telecomunicações, serviços digitais) OU se o órgão confirmado for "
+        "SEMIT ou SMART e o ato for contrato, licitação, resultado ou retificação deles. "
+        "Descarte todo o resto, mesmo que cite alguma palavra técnica de passagem.\n"
+        "- São sempre descartados, salvo se o objeto for de TI: patrocínios, eventos, shows e "
+        "atrações artísticas, permissões e concessões de uso de espaço, seguros, material esportivo, "
+        "de limpeza, hospitalar ou de escritório.\n"
+        "- Retificações só entram se o ato retificado cumprir as regras acima.\n"
         "- Se um ato parecer misturar trechos de atos diferentes, use só a parte coerente com o título.\n"
         "Formato (Google Chat):\n"
         "- Tópicos nesta ordem, omitindo os vazios:\n"
@@ -365,7 +377,7 @@ def montar_com_ia(atos):
             headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
                      "Content-Type": "application/json"},
             json={"model": os.environ.get("OPENAI_MODEL") or "gpt-5-mini",
-                  "max_completion_tokens": 8000,
+                  "max_completion_tokens": 16000,
                   "messages": [{"role": "user", "content": prompt}]},
             timeout=300)
         r.raise_for_status()
