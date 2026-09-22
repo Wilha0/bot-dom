@@ -31,6 +31,10 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (bot-dom-smart)"}
 # CONFIGURAÇÕES QUE VOCÊ PODE AJUSTAR
 # ---------------------------------------------------------------------------
 
+# Órgão da equipe: TODOS os atos entram, de qualquer tipo, numa seção própria no topo
+ORGAO_EQUIPE = "SMART"
+RE_EQUIPE = re.compile(r"\bSMART\b|Companhia Salvador Cidade Inteligente", re.I)
+
 # Siglas cujos contratos/licitações entram sempre, mesmo sem termo de TIC
 ORGAOS_SEMPRE = ["SEMIT", "SMART"]
 
@@ -39,7 +43,7 @@ TERMOS_TIC = [
     r"tecnologia da informa", r"\bTIC\b", r"software", r"\bSaaS\b", r"licen[çc]as? de (uso de )?(software|programas?)", r"cess[ãa]o de (direito de )?uso de (software|sistema)",
     r"licenciamento de (software|licen[çc]as)", r"nuvem", r"\bcloud\b", r"data ?center",
     r"desenvolvimento de sistemas?", r"sistemas? (de informa|informatizad|web)", r"sistema de gerenciamento",
-    r"link(s)? de (internet|dados|comunica)", r"\binternet\b", r"fibra [óo]ptica", r"redes? de dados",
+    r"link(s)? de (internet|dados|comunica)", r"redes? l[óo]gicas?", r"infraestrutura de redes?", r"cabeamento estruturado", r"sistemas? de alerta", r"outsourcing", r"loca[çc][ãa]o de (equipamentos de inform|computadores|impressoras|notebooks)", r"\binternet\b", r"fibra [óo]ptica", r"redes? de dados",
     r"computador", r"notebook", r"microcomputador", r"servidor(es)? de (rede|dados|aplica)",
     r"ciberseguran", r"seguran[çc]a da informa", r"\bLGPD\b", r"telecomunica", r"telefonia",
     r"outsourcing de impress", r"impressoras?", r"transforma[çc][ãa]o digital", r"intelig[êe]ncia artificial",
@@ -71,13 +75,13 @@ DESCARTAR = [
 # Tópicos da mensagem: (chave, título, regex do cabeçalho do ato)
 TOPICOS = [
     ("contrato", "📝 *Contratos, aditivos e apostilamentos*",
-     r"(EXTRATO|RESUMO)\s+(D[OAE]S?\s+)?(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?(CONTRATO|TERMO|ADITIVO|APOSTILA|CONV[ÊE]NIO|ACORDO|RESCIS)|(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?TERMO\s+(ADITIVO|DE\s+(APOSTILA|PRORROGA|RESCIS|RERRATIFICA))|APOSTILAMENTO|RESCIS[ÃA]O\s+(UNILATERAL|AMIG|CONTRATUAL|DO\s+CONTRATO)|RETIFICA[ÇC][ÃA]O\s+(DE|DO|DA)?\s*(RESUMO|EXTRATO|TERMO|CONTRATO)"),
+     r"(EXTRATO|RESUMO)\s+(D[OAE]S?\s+)?(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?(CONTRATO|TERMO|ADITIVO|APOSTILA|CONV[ÊE]NIO|ACORDO|RESCIS)|(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?TERMO\s+(ADITIVO|DE\s+(APOSTILA|PRORROGA|RESCIS|RERRATIFICA))|APOSTILAMENTO|AUTORIZA[ÇC][ÃA]O\s+DE\s+FORNECIMENTO|RESCIS[ÃA]O\s+(UNILATERAL|AMIG|CONTRATUAL|DO\s+CONTRATO)|RETIFICA[ÇC][ÃA]O\s+(DE|DO|DA)?\s*(RESUMO|EXTRATO|TERMO|CONTRATO)"),
     ("resultado", "✅ *Resultados, homologações e atas*",
      r"(AVISO\s+DE\s+|TERMO\s+DE\s+|EXTRATO\s+D[AE]\s+)?(HOMOLOGA|ADJUDICA|RATIFICA|RESULTADO)|(EXTRATO\s+D[AE]\s+)?ATA\s+DE\s+REGISTRO\s+DE\s+PRE"),
     ("licitacao", "📢 *Licitações, cotações e editais*",
      r"AVISO\s+DE\s+(LICITA|PREG|CONCORR|COTA|DISPENSA|CHAMAMENTO|INTEN|SESS|REABERTURA|ADIAMENTO|SUSPENS|RETIFICA|REVOGA|ANULA|CREDENCIA|CONVOCA)|AVISO\s+DE\s+CONTRATA|EDITAL|CHAMAMENTO\s+P[ÚU]BLICO|INTEN[ÇC][ÃA]O\s+DE\s+REGISTRO|DISPENSA\s+(DE\s+LICITA|ELETR)|INEXIGIBILIDADE"),
     ("outros", "📌 *Outros atos*",
-     r"PORTARIA\s+N|DECRETO\s+N|RESOLU[ÇC][ÃA]O\s+N|INSTRU[ÇC][ÃA]O\s+NORMATIVA|EXTRATO\b|AVISO\b|DESPACHO"),
+     r"PORTARIA\s+N|DECRETO\s+N|RESOLU[ÇC][ÃA]O\s+N|INSTRU[ÇC][ÃA]O\s+NORMATIVA|EXTRATO\b|AVISO\b|DESPACHO|COMUNICADO|DELIBERA[ÇC][ÃA]O|ATO\s+(N|D[OA]\s)|ATA\s+D[AE]|ERRATA|EDITAL\b|NOTIFICA[ÇC][ÃA]O|CONVOCA[ÇC][ÃA]O"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -97,7 +101,7 @@ RE_ORGAO = re.compile(
 # Cabeçalho de órgão em letras mistas (ex.: "Companhia Salvador Cidade Inteligente - SMART")
 RE_ORGAO_MISTO = re.compile(
     r"^(Companhia|Secretaria|Superintend[êe]ncia|Funda[çc][ãa]o|Empresa|Ag[êe]ncia|Controladoria|"
-    r"Procuradoria|Casa Civil|Gabinete do Prefeito)\b[^.;:]{5,110}\s[-–]\s[A-Z]{2,12}$")
+    r"Procuradoria|Casa Civil|Gabinete do Prefeito|Defesa Civil|Guarda Civil|Conselho)\b[^.;:]{5,110}\s[-–]\s[A-Z]{2,12}$")
 RE_CABECALHO = [
     re.compile(r"^DI[ÁA]RIO OFICIAL DO\b.*$"), re.compile(r"^SALVADOR-BAHIA\b.*$"),
     re.compile(r"^(SEGUNDA|TER[ÇC]A|QUARTA|QUINTA|SEXTA|S[ÁA]BADO|DOMINGO)[- A-ZÀ-Ú]*\d{1,2} (A \d{1,2} )?DE [A-ZÇ]+ DE \d{4}.*$"),
@@ -245,8 +249,18 @@ def separar_atos(linhas):
     return atos
 
 
+def eh_da_equipe(ato):
+    """Ato publicado pela SMART (cabeçalho do órgão ou nº do processo)."""
+    return bool(RE_EQUIPE.search(ato["orgao"]) or re.search(
+        r"PROCESSO[^:\d]{0,15}:?\s*[\d./]+\s*[-–/]\s*SMART\b", ato["titulo"] + " " + ato["texto"], re.I))
+
+
 def eh_relevante(ato):
     completo = ato["titulo"] + " " + ato["texto"]
+    if eh_da_equipe(ato):
+        ato["termo"] = f"órgão {ORGAO_EQUIPE} (todos os atos)"
+        ato["topico"] = "equipe"
+        return True
     if RE_DESCARTAR.search(completo):
         return False
     if ato["topico"] != "outros" and (RE_SEMPRE.search(ato["orgao"]) or RE_PROCESSO_SEMPRE.search(completo)):
@@ -260,7 +274,7 @@ def eh_relevante(ato):
 
 # ------------------------------ RESUMO -------------------------------------
 
-def campo(rx, texto, limite=220):
+def campo(rx, texto, limite=400):
     m = re.search(rx, texto, re.I)
     if not m:
         return ""
@@ -312,12 +326,13 @@ def resumir_ato(a):
     return linha + "\n   " + "\n   ".join(det)
 
 
-ORDEM_EXIBICAO = ["licitacao", "contrato", "resultado", "outros"]
+ORDEM_EXIBICAO = ["equipe", "licitacao", "contrato", "resultado", "outros"]
 
 
 def montar_por_regras(atos):
     blocos = []
     titulos = {k: t for k, t, _ in TOPICOS}
+    titulos["equipe"] = f"🏢 *{ORGAO_EQUIPE} – todos os atos*"
     for chave in ORDEM_EXIBICAO:
         titulo = titulos[chave]
         itens = [resumir_ato(a) for a in atos if a["topico"] == chave]
@@ -343,21 +358,31 @@ def montar_com_ia(atos):
         "infraestrutura de TI, telecomunicações, serviços digitais) OU se o órgão confirmado for "
         "SEMIT ou SMART e o ato for contrato, licitação, resultado ou retificação deles. "
         "Descarte todo o resto, mesmo que cite alguma palavra técnica de passagem.\n"
-        "- São sempre descartados, salvo se o objeto for de TI: patrocínios, eventos, shows e "
+        "- EXCEÇÃO: TODO ato da SMART (Companhia Salvador Cidade Inteligente) entra, de qualquer "
+        "tipo e assunto (portarias, nomeações, dispensas, compras comuns, contratos etc.). Os atos "
+        "marcados com TIPO: equipe PROVAVELMENTE são da SMART, mas confirme pelo texto: se o ato for "
+        "claramente de outro órgão (ex.: patrocínio da SPMJ), trate-o pelas regras normais. Os atos "
+        "confirmados da SMART vão no primeiro tópico: 🏢 *SMART – todos os atos*.\n"
+        "- São sempre descartados, salvo se o objeto for de TI ou o ato for da SMART: patrocínios, eventos, shows e "
         "atrações artísticas, permissões e concessões de uso de espaço, seguros, material esportivo, "
         "de limpeza, hospitalar ou de escritório.\n"
         "- Retificações só entram se o ato retificado cumprir as regras acima.\n"
         "- Se um ato parecer misturar trechos de atos diferentes, use só a parte coerente com o título.\n"
         "Formato (Google Chat):\n"
         "- Tópicos nesta ordem, omitindo os vazios:\n"
-        "  📢 *Licitações, cotações e editais*\n  📝 *Contratos, aditivos e apostilamentos*\n"
+        "  🏢 *SMART – todos os atos*\n  📢 *Licitações, cotações e editais*\n  📝 *Contratos, aditivos e apostilamentos*\n"
         "  ✅ *Resultados, homologações e atas*\n  📌 *Outros atos*\n"
-        "- Cada item em até 3 linhas curtas:\n"
+        "- Cada item deve ser informativo, com até 5 linhas:\n"
         "  • *SIGLA* – Tipo e número do ato em letras normais, não maiúsculas (ex.: Aviso de cotação nº 016/2026). "
         "Se for rescisão, prorrogação, suspensão, revogação ou anulação, acrescente ' · *rescisão*' (etc.). "
         "Termine com _(pág. N)_\n"
-        "  Objeto: resumo do objeto em no máximo 200 caracteres\n"
-        "  Empresa · Valor · uma única data, só os que existirem, separados por ' · '\n"
+        "  Objeto: o objeto REAL e concreto (o que está sendo contratado/comprado: bens, serviços, quantidades, "
+        "sistemas, locais atendidos), em até 400 caracteres. Ignore frases genéricas como 'Constitui objeto do "
+        "presente contrato a contratação por dispensa' e vá direto ao que é fornecido. Em apostilamentos e "
+        "aditivos, diga o que mudou (ex.: inclusão de dotação para os órgãos X e Y; prorrogação por 12 meses) "
+        "e qual é o objeto do contrato original, se constar.\n"
+        "  Empresa (com CNPJ se houver) · Valor (total ou mensal, indicando qual) · vigência ou uma única data útil\n"
+        "  Processo nº, modalidade e fundamento (ex.: dispensa art. 29, II, Lei 13.303) quando constarem, em uma linha curta.\n"
         "- Datas: no máximo UMA por item, a mais útil para quem acompanha (sessão de abertura, "
         "prazo final de propostas ou vigência). Nunca inclua data de assinatura, de publicação, "
         "de homologação, nem etapas intermediárias (envio de propostas, início da disputa). "
@@ -435,7 +460,7 @@ def gerar_mensagem(url_pdf, conteudo_pdf):
         corpo = montar_por_regras(atos)
     # Conta os itens da mensagem final (depois do filtro da IA, se houver)
     n = len(re.findall(r"^\s*•", corpo, re.M))
-    qtd = f" · {n} ato(s) de TIC" if n else ""
+    qtd = f" · {n} ato(s)" if n else ""
     return f"📰 *DOM Salvador – {edicao} – {data}*{qtd}\n{url_pdf}\n\n{corpo}"
 
 
