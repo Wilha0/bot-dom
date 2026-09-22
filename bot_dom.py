@@ -177,17 +177,53 @@ def colunas_da_pagina(page):
     return [(bordas[i], bordas[i + 1]) for i in range(len(bordas) - 1)]
 
 
+def faixas_da_pagina(page, colunas):
+    """Divide a página em faixas horizontais: trechos em colunas e trechos de largura total
+    (títulos de seção como 'CONTRATOS', tabelas largas). Sem isso, um ato que continua na
+    coluna da direita, acima de um título de largura total, é lido fora de ordem."""
+    h = page.height
+    if len(colunas) < 2:
+        return [("colunas", 0, h)]
+    cortes = [c[1] for c in colunas[:-1]]
+    largas = []
+    for p in page.extract_words():
+        if any(p["x0"] < c - 3 and p["x1"] > c + 3 for c in cortes):
+            largas.append([p["top"] - 1, p["bottom"] + 1])
+    largas.sort()
+    juntas = []
+    for ini, fim in largas:
+        if juntas and ini <= juntas[-1][1] + 4:
+            juntas[-1][1] = max(juntas[-1][1], fim)
+        else:
+            juntas.append([ini, fim])
+    faixas, y = [], 0
+    for ini, fim in juntas:
+        if ini > y:
+            faixas.append(("colunas", y, ini))
+        faixas.append(("larga", ini, fim))
+        y = fim
+    if y < h:
+        faixas.append(("colunas", y, h))
+    return faixas
+
+
 def ler_pdf(conteudo):
     """Retorna lista de (nº da página, linha) na ordem de leitura."""
     linhas = []
     with pdfplumber.open(io.BytesIO(conteudo)) as pdf:
         for n, page in enumerate(pdf.pages, start=1):
-            for x0, x1 in colunas_da_pagina(page):
-                txt = page.crop((x0, 0, x1, page.height)).extract_text() or ""
-                for l in txt.split("\n"):
-                    l = l.strip()
-                    if l and not any(r.match(l) for r in RE_CABECALHO):
-                        linhas.append((n, l))
+            colunas = colunas_da_pagina(page)
+            for tipo, y0, y1 in faixas_da_pagina(page, colunas):
+                y0, y1 = max(0, y0), min(page.height, y1)
+                if y1 - y0 < 1:
+                    continue
+                recortes = [(0, page.width)] if tipo == "larga" else colunas
+                for x0, x1 in recortes:
+                    txt = page.crop((x0, y0, x1, y1)).extract_text() or ""
+                    for l in txt.split("\n"):
+                        l = l.strip()
+                        if l and not any(r.match(l) for r in RE_CABECALHO):
+                            linhas.append((n, l))
     return linhas
 
 
