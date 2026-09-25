@@ -227,6 +227,64 @@ def ler_pdf(conteudo):
     return linhas
 
 
+# ------------------------ MENÇÕES À SMART EM TABELAS ------------------------
+
+RE_MENCAO = re.compile(r"\bSMART\b|\bSmart\b|Companhia Salvador Cidade Inteligente", re.I)
+RE_TITULO_TABELA = re.compile(r"DEMONSTRATIVO|RELAT[ÓO]RIO|ANEXO AO DECRETO|DECRETO N|PORTARIA|QUADRO|BALAN[ÇC]O|ANEXO \d", re.I)
+RE_CABECALHO_TABELA = re.compile(r"Inscrit|Liquidad|Pagos|Cancelad|Saldo|SUPLEMENTA|ANULA|EMPENHAD|DOTA[ÇC][ÃA]O|PROCESSADOS", re.I)
+
+
+# Colunas de tabelas padronizadas do DOM, para a IA interpretar os valores com segurança
+COLUNAS_CONHECIDAS = [
+    (r"RESTOS A PAGAR POR PODER E [ÓO]RG[ÃA]O", [
+        "colunas na ordem: RP PROCESSADOS – inscritos em exercícios anteriores (a), inscritos em 31/dez do "
+        "ano anterior (b), pagos (c), cancelados (d), saldo (e) | RP NÃO PROCESSADOS – inscritos em exercícios "
+        "anteriores (f), inscritos em 31/dez do ano anterior (g), liquidados (h), pagos (i), cancelados (j), "
+        "saldo (k) | SALDO TOTAL (L). '-' significa zero"]),
+    (r"ANEXO AO DECRETO|DECRETO N", [
+        "colunas: ÓRGÃO/UNIDADE, PROJETO/ATIVIDADE, ELEMENTO DE DESPESA, FONTE, SUPLEMENTAÇÃO, ANULAÇÃO "
+        "(valores em R$). O código 637002-SMART é a unidade orçamentária da SMART"]),
+]
+
+
+def mencoes_equipe(conteudo, atos_equipe):
+    """Procura a SMART em tabelas e relatórios (ex.: restos a pagar, decretos orçamentários).
+    Usa o extrator do pdfium, que lê tabelas que o pdfplumber às vezes não consegue."""
+    import pypdfium2 as pdfium
+    textos_equipe = " ".join(re.sub(r"\s+", " ", a["texto"]) for a in atos_equipe)
+    grupos = {}
+    pdf = pdfium.PdfDocument(conteudo)
+    for n in range(len(pdf)):
+        linhas = [re.sub(r"\s+", " ", l).strip() for l in pdf[n].get_textpage().get_text_range().splitlines()]
+        linhas = [l for l in linhas if l]
+        for i, l in enumerate(linhas):
+            if not RE_MENCAO.search(l):
+                continue
+            if n == 0 and re.search(r"\s\d{1,3}$", l):          # sumário da capa
+                continue
+            if re.fullmatch(r"(Companhia Salvador Cidade Inteligente|SECRETARIA MUNICIPAL DE INOVA.*)\s*-\s*SMART", l, re.I):
+                continue                                            # cabeçalho de seção
+            if l[:40] in textos_equipe:                             # já está num ato da SMART
+                continue
+            titulos = [(abs(j - i) + (0 if j < i else 0.5), linhas[j]) for j in range(len(linhas))
+                       if RE_TITULO_TABELA.search(linhas[j]) and len(linhas[j]) < 140]
+            titulo = min(titulos)[1] if titulos else "tabela"
+            cab = next((c for rx, c in COLUNAS_CONHECIDAS if re.search(rx, titulo, re.I)), None) \
+                or [x for x in linhas if RE_CABECALHO_TABELA.search(x) and len(x) < 160][:6]
+            chave = (n + 1, titulo)
+            g = grupos.setdefault(chave, {"topico": "equipe", "tipo": "mencao", "orgao": "SMART", "sigla": "SMART",
+                                          "pagina": n + 1, "titulo": f"Menção em {titulo}",
+                                          "linhas_mencao": [], "cabecalhos": cab})
+            g["linhas_mencao"].append(" | ".join(linhas[max(0, i - 1):i + 2]) if len(l) < 25 else l)
+    atos = []
+    for g in grupos.values():
+        g["texto"] = ("TABELA/RELATÓRIO: " + g["titulo"][10:] + ". CABEÇALHOS: " + " / ".join(g["cabecalhos"])
+                      + ". LINHAS QUE CITAM A SMART: " + " || ".join(g["linhas_mencao"][:10]))
+        g["termo"] = "menção à SMART em tabela"
+        atos.append(g)
+    return atos
+
+
 # ---------------------------- SEPARAR ATOS ---------------------------------
 
 def maiusculo(l):
@@ -334,6 +392,9 @@ def titulo_legivel(t):
 
 
 def resumir_ato(a):
+    if a.get("tipo") == "mencao":
+        linhas = "\n   ".join(l[:300] for l in a["linhas_mencao"][:5])
+        return f"• *SMART* – {a['titulo'][:110]} _(pág. {a['pagina']})_\n   {linhas}"
     t = a["texto"]
     objeto = campo(r"OBJETO\s*(?:DO\s+\w+\s*)?[:\-–]\s*(.+?)(?=\s+(?-i:VALOR|VIG[ÊE]NCIA|PRAZO|CONTRATAD[AO]|DOTA[ÇC][ÃA]O|FUNDAMENTO|AMPARO LEGAL|DATA DA ASSINATURA|PROCESSO)[^:.]{0,15}:|$)", t) \
         or campo(r"(?:tem por (?:objeto|finalidade)|objetivando a?|visando a?)\s+(.+?)(?:[.;]\s|$)", t) \
@@ -399,6 +460,12 @@ def montar_com_ia(atos):
         "marcados com TIPO: equipe PROVAVELMENTE são da SMART, mas confirme pelo texto: se o ato for "
         "claramente de outro órgão (ex.: patrocínio da SPMJ), trate-o pelas regras normais. Os atos "
         "confirmados da SMART vão no primeiro tópico: 🏢 *SMART – todos os atos*.\n"
+        "- Itens com TÍTULO 'Menção em ...' são linhas de tabelas ou relatórios que citam a SMART "
+        "(ex.: restos a pagar por órgão, decretos de crédito suplementar). Inclua-os também no tópico "
+        "da SMART, explicando em até 2 linhas o que os valores representam, usando o título da tabela "
+        "e os cabeçalhos (ex.: 'Restos a pagar processados: inscritos R$ X, pagos R$ Y; não processados: "
+        "saldo R$ Z'). Se não der para identificar as colunas com segurança, transcreva os valores sem "
+        "interpretar.\n"
         "- São sempre descartados, salvo se o objeto for de TI ou o ato for da SMART: patrocínios, eventos, shows e "
         "atrações artísticas, permissões e concessões de uso de espaço, seguros, material esportivo, "
         "de limpeza, hospitalar ou de escritório.\n"
@@ -476,6 +543,10 @@ def gerar_mensagem(url_pdf, conteudo_pdf):
     edicao, data = dados_da_edicao(url_pdf)
     todos = separar_atos(ler_pdf(conteudo_pdf))
     atos = [a for a in todos if eh_relevante(a)]
+    try:
+        atos += mencoes_equipe(conteudo_pdf, [a for a in atos if a["topico"] == "equipe"])
+    except Exception as e:
+        print(f"AVISO: não foi possível procurar menções à SMART em tabelas ({e}).")
     if os.environ.get("DIAGNOSTICO") == "sim":
         print(f"=== DIAGNÓSTICO: {len(todos)} atos lidos, {len(atos)} selecionados ===")
         for a in todos:
