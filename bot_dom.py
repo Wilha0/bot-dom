@@ -187,7 +187,7 @@ def faixas_da_pagina(page, colunas):
     cortes = [c[1] for c in colunas[:-1]]
     largas = []
     for p in page.extract_words():
-        if any(p["x0"] < c - 3 and p["x1"] > c + 3 for c in cortes):
+        if any(p["x0"] < c - 12 and p["x1"] > c + 12 for c in cortes):
             largas.append([p["top"] - 1, p["bottom"] + 1])
     largas.sort()
     juntas = []
@@ -207,20 +207,35 @@ def faixas_da_pagina(page, colunas):
     return faixas
 
 
+def linhas_de_palavras(palavras):
+    """Monta linhas de texto a partir das palavras (agrupando pela altura na página)."""
+    linhas = []
+    for p in sorted(palavras, key=lambda w: (round(w["top"]), w["x0"])):
+        if linhas and abs(p["top"] - linhas[-1]["top"]) < 3:
+            linhas[-1]["ws"].append(p)
+        else:
+            linhas.append({"top": p["top"], "ws": [p]})
+    return [" ".join(w["text"] for w in sorted(l["ws"], key=lambda w: w["x0"])) for l in linhas]
+
+
 def ler_pdf(conteudo):
-    """Retorna lista de (nº da página, linha) na ordem de leitura."""
+    """Retorna lista de (nº da página, linha) na ordem de leitura.
+    Cada palavra vai inteira para a coluna onde COMEÇA, para não cortar palavras
+    que ultrapassam um pouco o espaço entre colunas."""
     linhas = []
     with pdfplumber.open(io.BytesIO(conteudo)) as pdf:
         for n, page in enumerate(pdf.pages, start=1):
             colunas = colunas_da_pagina(page)
+            palavras = page.extract_words()
             for tipo, y0, y1 in faixas_da_pagina(page, colunas):
-                y0, y1 = max(0, y0), min(page.height, y1)
-                if y1 - y0 < 1:
+                faixa = [w for w in palavras if y0 <= w["top"] < y1]
+                if not faixa:
                     continue
-                recortes = [(0, page.width)] if tipo == "larga" else colunas
-                for x0, x1 in recortes:
-                    txt = page.crop((x0, y0, x1, y1)).extract_text() or ""
-                    for l in txt.split("\n"):
+                recortes = [(0, page.width + 1)] if tipo == "larga" else colunas
+                for i, (x0, x1) in enumerate(recortes):
+                    ultimo = i == len(recortes) - 1
+                    col = [w for w in faixa if (x0 - 1 <= w["x0"] < x1) or (ultimo and w["x0"] >= x1)]
+                    for l in linhas_de_palavras(col):
                         l = l.strip()
                         if l and not any(r.match(l) for r in RE_CABECALHO):
                             linhas.append((n, l))
@@ -229,7 +244,13 @@ def ler_pdf(conteudo):
 
 # ------------------------ MENÇÕES À SMART EM TABELAS ------------------------
 
-RE_MENCAO = re.compile(r"\bSMART\b|\bSmart\b|Companhia Salvador Cidade Inteligente", re.I)
+RE_MENCAO = re.compile(
+    r"Companhia Salvador Cidade Inteligente"          # nome da empresa
+    r"|\b637002\b"                                     # unidade orçamentária da SMART
+    r"|[-–/]\s*SMART\b(?!\s+[A-ZÀ-Ú]{3,})"             # sigla após traço/barra: "... - SMART"
+    r"|^\s*Smart\s+[-\d]", re.I)                      # linha de tabela por órgão: "Smart 3.403,56 ..."
+# Nomes de terceiros que contêm "Smart" e não são a Companhia
+RE_MENCAO_FALSA = re.compile(r"SMART\s+PATAMARES|SPE\s+SMART|Smart\s+Patamares", re.I)
 RE_TITULO_TABELA = re.compile(r"DEMONSTRATIVO|RELAT[ÓO]RIO|ANEXO AO DECRETO|DECRETO N|PORTARIA|QUADRO|BALAN[ÇC]O|ANEXO \d", re.I)
 RE_CABECALHO_TABELA = re.compile(r"Inscrit|Liquidad|Pagos|Cancelad|Saldo|SUPLEMENTA|ANULA|EMPENHAD|DOTA[ÇC][ÃA]O|PROCESSADOS", re.I)
 
@@ -258,7 +279,7 @@ def mencoes_equipe(conteudo, atos_equipe):
         linhas = [re.sub(r"\s+", " ", l).strip() for l in pdf[n].get_textpage().get_text_range().splitlines()]
         linhas = [l for l in linhas if l]
         for i, l in enumerate(linhas):
-            if not RE_MENCAO.search(l):
+            if not RE_MENCAO.search(l) or RE_MENCAO_FALSA.search(l):
                 continue
             if n == 0 and re.search(r"\s\d{1,3}$", l):          # sumário da capa
                 continue
@@ -319,7 +340,8 @@ def separar_atos(linhas):
                               and len(atual["linhas"]) < 15
                               and not any(re.match(r"Salvador,\s+\d", x) for x in atual["linhas"]))
         # Início de um ato
-        if maiusculo(l[:60]) and not dentro_retificacao:
+        eh_rotulo = re.match(r"^[A-ZÀ-Ú ]{3,40}:\s*\S", l) is not None   # ex.: "HOMOLOGAÇÃO: 15/09/2026"
+        if maiusculo(l[:60]) and not dentro_retificacao and not eh_rotulo:
             for chave, _, rx in TOPICOS_RE:
                 if rx.match(l):
                     titulo = l
@@ -438,8 +460,27 @@ def montar_por_regras(atos):
     return "\n\n".join(blocos)
 
 
-def montar_com_ia(atos):
-    """Usa OpenAI (OPENAI_API_KEY) ou Anthropic (ANTHROPIC_API_KEY), o que estiver cadastrado."""
+MAX_PAGINAS_IMAGEM = 8
+
+
+def imagens_das_paginas(conteudo_pdf, atos):
+    """Gera imagens (PNG em base64) das páginas onde estão os atos, para a IA conferir
+    o texto extraído contra o layout real. Páginas da SMART têm prioridade."""
+    import base64, pypdfium2 as pdfium
+    ordem = sorted({a["pagina"] for a in atos}, key=lambda p: (
+        not any(a["pagina"] == p and a["topico"] == "equipe" for a in atos), p))[:MAX_PAGINAS_IMAGEM]
+    pdf = pdfium.PdfDocument(conteudo_pdf)
+    imagens = []
+    for p in sorted(ordem):
+        buf = io.BytesIO()
+        pdf[p - 1].render(scale=2).to_pil().convert("L").save(buf, format="PNG", optimize=True)
+        imagens.append((p, base64.b64encode(buf.getvalue()).decode()))
+    return imagens
+
+
+def montar_com_ia(atos, conteudo_pdf=None):
+    """Usa OpenAI (OPENAI_API_KEY) ou Anthropic (ANTHROPIC_API_KEY), o que estiver cadastrado.
+    Envia o texto pré-selecionado e as IMAGENS das páginas, para a IA conferir no original."""
     material = "\n\n".join(
         f"[{i}] TIPO: {a['topico']} | ÓRGÃO: {a['orgao']} | PÁGINA: {a['pagina']}\n{a['titulo']}\n{a['texto'][:3000]}"
         for i, a in enumerate(atos, 1))
@@ -447,6 +488,15 @@ def montar_com_ia(atos):
         "Você recebe atos do Diário Oficial do Município de Salvador pré-selecionados por "
         "tratarem de tecnologia. Monte um apanhado para uma equipe de contratações de TIC.\n"
         "Regras de seleção:\n"
+        "- Junto com o texto você recebe IMAGENS das páginas do DOM. As imagens são a fonte oficial. "
+        "O texto abaixo foi extraído automaticamente de um jornal em colunas e PODE ESTAR ERRADO: "
+        "misturar trechos de atos vizinhos, atribuir o ato ao órgão errado ou cortar informações. "
+        "Para cada ato, localize-o na imagem da página indicada e confira: órgão (o cabeçalho de seção "
+        "acima do ato, na mesma coluna), tipo e número, empresa, objeto, valores e datas. Se o texto "
+        "divergir da imagem, use SEMPRE a imagem. Se ver nas imagens um ato da SMART ou de TIC que não "
+        "está na lista, inclua-o.\n"
+        "- Se dois itens tratarem do mesmo processo (ex.: inexigibilidade e o contrato resultante), "
+        "junte-os em um único item citando as duas publicações e páginas.\n"
         "- PRIMEIRO confirme o órgão responsável. O campo ÓRGÃO foi detectado automaticamente e "
         "pode estar errado. Se o texto indicar outro órgão (ex.: 'PREGÃO ELETRÔNICO - SEMGE', "
         "'PROCESSO Nº ...-SMED', e-mail institucional, assinatura, 'políticas públicas da SPMJ'), "
@@ -499,25 +549,48 @@ def montar_com_ia(atos):
         "identificado'. A mensagem termina no último item.\n"
         "- Se NENHUM ato for relevante, responda apenas: Nenhum ato de TIC identificado.\n\n"
         + material[:150000])
+    imagens = []
+    if conteudo_pdf:
+        try:
+            imagens = imagens_das_paginas(conteudo_pdf, atos)
+        except Exception as e:
+            print(f"AVISO: não foi possível gerar imagens das páginas ({e}).")
+
     if os.environ.get("OPENAI_API_KEY"):
-        r = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
-                     "Content-Type": "application/json"},
-            json={"model": os.environ.get("OPENAI_MODEL") or "gpt-5-mini",
-                  "max_completion_tokens": 16000,
-                  "messages": [{"role": "user", "content": prompt}]},
-            timeout=300)
+        def chamar_openai(com_imagens):
+            conteudo = [{"type": "text", "text": prompt}]
+            if com_imagens:
+                for p, b64 in imagens:
+                    conteudo.append({"type": "text", "text": f"Imagem da página {p}:"})
+                    conteudo.append({"type": "image_url", "image_url": {
+                        "url": f"data:image/png;base64,{b64}", "detail": "high"}})
+            return requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
+                         "Content-Type": "application/json"},
+                json={"model": os.environ.get("OPENAI_MODEL") or "gpt-5-mini",
+                      "max_completion_tokens": 16000,
+                      "messages": [{"role": "user", "content": conteudo}]},
+                timeout=300)
+        r = chamar_openai(bool(imagens))
+        if r.status_code == 400 and imagens:
+            print(f"AVISO: o modelo recusou as imagens ({r.text[:200]}). Tentando só com texto.")
+            r = chamar_openai(False)
         r.raise_for_status()
         return (r.json()["choices"][0]["message"]["content"] or "").strip()
 
+    conteudo = []
+    for p, b64 in imagens:
+        conteudo.append({"type": "text", "text": f"Imagem da página {p}:"})
+        conteudo.append({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}})
+    conteudo.append({"type": "text", "text": prompt})
     r = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01",
                  "content-type": "application/json"},
-        json={"model": "claude-sonnet-5", "max_tokens": 3000,
-              "messages": [{"role": "user", "content": prompt}]},
-        timeout=240)
+        json={"model": "claude-sonnet-5", "max_tokens": 4000,
+              "messages": [{"role": "user", "content": conteudo}]},
+        timeout=300)
     r.raise_for_status()
     return "".join(b.get("text", "") for b in r.json()["content"]).strip()
 
@@ -555,7 +628,7 @@ def gerar_mensagem(url_pdf, conteudo_pdf):
         corpo = "Nenhum ato de TIC identificado nesta edição."
     elif os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"):
         try:
-            corpo = montar_com_ia(atos)
+            corpo = montar_com_ia(atos, conteudo_pdf)
             corpo = re.sub(r"\n+\s*[•*_ ]*Nenhum (outro|demais).{0,60}$", "", corpo.strip(), flags=re.I)
             if not corpo:
                 raise ValueError("resposta vazia da IA")
