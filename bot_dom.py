@@ -16,6 +16,7 @@ Variáveis de ambiente:
   ANTHROPIC_API_KEY   (opcional) chave da Anthropic (sk-ant-...), alternativa à OpenAI
   ANTHROPIC_MODEL     (opcional) modelo Claude; padrão: claude-sonnet-5
   FORCAR_ENVIO        (opcional) "sim" reenvia a edição mesmo que já tenha sido enviada
+  TESTE               (opcional) "sim" gera a mensagem só no log, sem enviar ao Google Chat
   DIAGNOSTICO         (opcional) "sim" mostra o motivo de cada item e lista todos os atos no log
 """
 import os, re, io, time
@@ -659,11 +660,17 @@ def executar():
         print("PDF não encontrado.")
         return
     ultima = open(STATE_FILE).read().strip() if os.path.exists(STATE_FILE) else ""
-    if url_pdf == ultima and os.environ.get("FORCAR_ENVIO") != "sim":
+    teste = os.environ.get("TESTE") == "sim"
+    if url_pdf == ultima and os.environ.get("FORCAR_ENVIO") != "sim" and not teste:
         print("Edição já enviada.")
         return
     conteudo = baixar(url_pdf, timeout=180).content
     mensagem = gerar_mensagem(url_pdf, conteudo)
+    if teste:
+        # Modo teste: mostra a mensagem no log e não envia nem registra a edição
+        print("=== MODO TESTE: mensagem NÃO enviada ao Google Chat ===\n")
+        print(mensagem)
+        return
     enviar_chat(mensagem)
     with open(STATE_FILE, "w") as f:
         f.write(url_pdf)
