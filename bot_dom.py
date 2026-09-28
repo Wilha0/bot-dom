@@ -277,8 +277,16 @@ def mencoes_equipe(conteudo, atos_equipe):
     textos_equipe = " ".join(re.sub(r"\s+", " ", a["texto"]) for a in atos_equipe)
     grupos = {}
     pdf = pdfium.PdfDocument(conteudo)
+    textos_paginas = []
     for n in range(len(pdf)):
-        linhas = [re.sub(r"\s+", " ", l).strip() for l in pdf[n].get_textpage().get_text_range().splitlines()]
+        pagina = pdf[n]
+        tp = pagina.get_textpage()
+        textos_paginas.append(tp.get_text_range())
+        tp.close()
+        pagina.close()
+    pdf.close()
+    for n, texto_pagina in enumerate(textos_paginas):
+        linhas = [re.sub(r"\s+", " ", l).strip() for l in texto_pagina.splitlines()]
         linhas = [l for l in linhas if l]
         for i, l in enumerate(linhas):
             if not RE_MENCAO.search(l) or RE_MENCAO_FALSA.search(l):
@@ -475,8 +483,13 @@ def imagens_das_paginas(conteudo_pdf, atos):
     imagens = []
     for p in sorted(ordem):
         buf = io.BytesIO()
-        pdf[p - 1].render(scale=2).to_pil().convert("L").save(buf, format="PNG", optimize=True)
+        pagina = pdf[p - 1]
+        bitmap = pagina.render(scale=2)
+        bitmap.to_pil().convert("L").save(buf, format="PNG", optimize=True)
+        bitmap.close()
+        pagina.close()
         imagens.append((p, base64.b64encode(buf.getvalue()).decode()))
+    pdf.close()
     return imagens
 
 
