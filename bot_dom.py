@@ -14,6 +14,7 @@ Variáveis de ambiente:
   OPENAI_API_KEY      (opcional) chave da OpenAI (sk-proj-...) para resumo com IA
   OPENAI_MODEL        (opcional) modelo da OpenAI; padrão: gpt-5-mini
   ANTHROPIC_API_KEY   (opcional) chave da Anthropic (sk-ant-...), alternativa à OpenAI
+  ANTHROPIC_MODEL     (opcional) modelo Claude; padrão: claude-sonnet-5
   FORCAR_ENVIO        (opcional) "sim" reenvia a edição mesmo que já tenha sido enviada
   DIAGNOSTICO         (opcional) "sim" mostra o motivo de cada item e lista todos os atos no log
 """
@@ -588,7 +589,7 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "https://api.anthropic.com/v1/messages",
         headers={"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01",
                  "content-type": "application/json"},
-        json={"model": "claude-sonnet-5", "max_tokens": 4000,
+        json={"model": os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-5", "max_tokens": 8000,
               "messages": [{"role": "user", "content": conteudo}]},
         timeout=300)
     r.raise_for_status()
