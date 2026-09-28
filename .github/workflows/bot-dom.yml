@@ -14,6 +14,9 @@ on:
       diagnostico:
         description: "Mostrar o motivo de cada item? (sim/nao)"
         default: "nao"
+      teste:
+        description: "Só testar, sem enviar ao Google Chat? (sim/nao)"
+        default: "nao"
 
 permissions:
   contents: write
@@ -36,6 +39,7 @@ jobs:
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           FORCAR_ENVIO: ${{ github.event.inputs.forcar_envio }}
           DIAGNOSTICO: ${{ github.event.inputs.diagnostico }}
+          TESTE: ${{ github.event.inputs.teste }}
       - name: Salvar última edição enviada
         run: |
           git config user.name "bot-dom"
