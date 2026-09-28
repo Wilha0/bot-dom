@@ -316,6 +316,52 @@ def mencoes_equipe(conteudo, atos_equipe):
     return atos
 
 
+# ------------------ NOMEAÇÕES E EXONERAÇÕES DA SEMIT ------------------------
+
+# Órgão cujas nomeações/exonerações aparecem numa seção própria
+ORGAO_PESSOAL = "SEMIT"
+RE_ORGAO_PESSOAL = re.compile(r"\bSEMIT\b|Secretaria\s+Municipal\s+de\s+Inova[çc][ãa]o\s+e\s+Tecnologia", re.I)
+RE_ATO_PESSOAL = re.compile(
+    r"(Nomear|Exonerar|Considerar\s+exonerad[oa]|Considerar\s+nomead[oa]"
+    r"|Tornar\s+sem\s+efeito[^.]{0,120}?(?:nomea|exonera)\w*"
+    r"|referente\s+[àa]\s+(?:nomea|exonera)\w*\s+de)", re.I)
+RE_FIM_ATO_PESSOAL = re.compile(
+    r"O\s+PREFEITO\s+DO\s+MUNIC|GABINETE\s+DO\s+PREFEITO|RESOLVE\s*:|DECRETO\s+(?:de|N)|"
+    r"(?:Nomear|Exonerar)\s", re.I)
+
+
+def pessoal_semit(conteudo):
+    """Procura decretos de nomeação/exoneração cujo cargo é da SEMIT (em geral nos
+    'Decretos Simples' do Prefeito, e não sob o cabeçalho da secretaria)."""
+    import pypdfium2 as pdfium
+    pdf = pdfium.PdfDocument(conteudo)
+    textos = []
+    for n in range(len(pdf)):
+        pagina = pdf[n]
+        tp = pagina.get_textpage()
+        textos.append(tp.get_text_range())
+        tp.close()
+        pagina.close()
+    pdf.close()
+    achados = []
+    for n, texto in enumerate(textos, start=1):
+        corrido = re.sub(r"-\s*\n\s*", "-", texto)
+        corrido = re.sub(r"\s+", " ", corrido)
+        for m in RE_ATO_PESSOAL.finditer(corrido):
+            ini = m.start()
+            prox = RE_FIM_ATO_PESSOAL.search(corrido, m.end() + 5)
+            fim = min(prox.start() if prox else len(corrido), ini + 700)
+            trecho = corrido[ini:fim].strip()
+            if RE_ORGAO_PESSOAL.search(trecho) and not any(trecho[:80] in a["texto"] for a in achados):
+                tipo = "Exoneração" if re.search(r"exonera", m.group(0), re.I) else "Nomeação"
+                if re.search(r"sem\s+efeito|referente", m.group(0), re.I):
+                    tipo = "Retificação / sem efeito"
+                achados.append({"topico": "pessoal", "tipo": "pessoal", "orgao": ORGAO_PESSOAL,
+                                "sigla": ORGAO_PESSOAL, "pagina": n, "titulo": tipo, "texto": trecho,
+                                "termo": f"nomeação/exoneração {ORGAO_PESSOAL}"})
+    return achados
+
+
 # ---------------------------- SEPARAR ATOS ---------------------------------
 
 def maiusculo(l):
@@ -424,6 +470,8 @@ def titulo_legivel(t):
 
 
 def resumir_ato(a):
+    if a.get("tipo") == "pessoal":
+        return f"• *{a['titulo']}* – {a['texto'][:350]} _(pág. {a['pagina']})_"
     if a.get("tipo") == "mencao":
         linhas = "\n   ".join(l[:300] for l in a["linhas_mencao"][:5])
         return f"• *SMART* – {a['titulo'][:110]} _(pág. {a['pagina']})_\n   {linhas}"
@@ -455,13 +503,14 @@ def resumir_ato(a):
     return linha + "\n   " + "\n   ".join(det)
 
 
-ORDEM_EXIBICAO = ["equipe", "licitacao", "contrato", "resultado", "outros"]
+ORDEM_EXIBICAO = ["equipe", "pessoal", "licitacao", "contrato", "resultado", "outros"]
 
 
 def montar_por_regras(atos):
     blocos = []
     titulos = {k: t for k, t, _ in TOPICOS}
     titulos["equipe"] = f"🏢 *{ORGAO_EQUIPE} – todos os atos*"
+    titulos["pessoal"] = f"👤 *{ORGAO_PESSOAL} – nomeações e exonerações*"
     for chave in ORDEM_EXIBICAO:
         titulo = titulos[chave]
         itens = [resumir_ato(a) for a in atos if a["topico"] == chave]
@@ -531,6 +580,12 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "e os cabeçalhos (ex.: 'Restos a pagar processados: inscritos R$ X, pagos R$ Y; não processados: "
         "saldo R$ Z'). Se não der para identificar as colunas com segurança, transcreva os valores sem "
         "interpretar.\n"
+        "- Itens com TIPO: pessoal são nomeações, exonerações (ou retificações delas) de cargos da SEMIT. "
+        "Confirme na imagem que o cargo é mesmo da SEMIT (Secretaria Municipal de Inovação e Tecnologia) e "
+        "coloque-os num tópico próprio, logo após o da SMART: 👤 *SEMIT – nomeações e exonerações*. "
+        "Um item por pessoa, em UMA linha: '• *Nomeação* – NOME, cargo (e grau) _(pág. N)_' ou "
+        "'• *Exoneração* – NOME, cargo, a pedido se constar _(pág. N)_'. Não inclua nomeações e "
+        "exonerações de outros órgãos.\n"
         "- São sempre descartados, salvo se o objeto for de TI ou o ato for da SMART: patrocínios, eventos, shows e "
         "atrações artísticas, permissões e concessões de uso de espaço, seguros, material esportivo, "
         "de limpeza, hospitalar ou de escritório.\n"
@@ -538,7 +593,7 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "- Se um ato parecer misturar trechos de atos diferentes, use só a parte coerente com o título.\n"
         "Formato (Google Chat):\n"
         "- Tópicos nesta ordem, omitindo os vazios:\n"
-        "  🏢 *SMART – todos os atos*\n  📢 *Licitações, cotações e editais*\n  📝 *Contratos, aditivos e apostilamentos*\n"
+        "  🏢 *SMART – todos os atos*\n  👤 *SEMIT – nomeações e exonerações*\n  📢 *Licitações, cotações e editais*\n  📝 *Contratos, aditivos e apostilamentos*\n"
         "  ✅ *Resultados, homologações e atas*\n  📌 *Outros atos*\n"
         "- Cada item deve ser informativo, com até 5 linhas:\n"
         "  • *SIGLA* – Tipo e número do ato em letras normais, não maiúsculas (ex.: Aviso de cotação nº 016/2026). "
@@ -631,6 +686,10 @@ def gerar_mensagem(url_pdf, conteudo_pdf):
     edicao, data = dados_da_edicao(url_pdf)
     todos = separar_atos(ler_pdf(conteudo_pdf))
     atos = [a for a in todos if eh_relevante(a)]
+    try:
+        atos += pessoal_semit(conteudo_pdf)
+    except Exception as e:
+        print(f"AVISO: não foi possível procurar nomeações/exonerações da SEMIT ({e}).")
     try:
         atos += mencoes_equipe(conteudo_pdf, [a for a in atos if a["topico"] == "equipe"])
     except Exception as e:
