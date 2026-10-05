@@ -2,6 +2,7 @@ name: Bot DOM Salvador
 
 on:
   schedule:
+    # Reserva: o disparo principal vem do cron-job.org
     # Seg–sex, a cada 15 min das 11h às 20h45 (horário de Brasília)
     - cron: "*/15 14-23 * * 1-5"
     # Seg–sex, às 21h (em UTC já é 00h do dia seguinte)
@@ -21,11 +22,20 @@ on:
 permissions:
   contents: write
 
+# Uma execução por vez: a seguinte espera a anterior terminar (evita mensagem duplicada)
+concurrency:
+  group: bot-dom
+  cancel-in-progress: false
+
 jobs:
   rodar:
     runs-on: ubuntu-latest
+    # Se algo travar (GitHub ou API lenta), encerra em 15 min em vez de ficar preso por horas
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
