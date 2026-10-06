@@ -35,17 +35,28 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (bot-dom-smart)"}
 
 # Órgão da equipe: TODOS os atos entram, de qualquer tipo, numa seção própria no topo
 ORGAO_EQUIPE = "SMART"
-RE_EQUIPE = re.compile(r"\bSMART\b|Companhia Salvador Cidade Inteligente", re.I)
+# COGEL (Companhia de Governança Eletrônica) é o nome antigo da SMART
+RE_EQUIPE = re.compile(r"\bSMART\b|Companhia Salvador Cidade Inteligente|\bCOGEL\b|Companhia de Governan[çc]a Eletr[ôo]nica", re.I)
 
 # Siglas cujos contratos/licitações entram sempre, mesmo sem termo de TIC
-ORGAOS_SEMPRE = ["SEMIT", "SMART"]
+ORGAOS_SEMPRE = ["SEMIT", "SMART", "COGEL"]  # COGEL = nome antigo da SMART
+
+# Processos que a equipe acompanha, mesmo quando publicados por OUTROS órgãos
+# (ex.: TR elaborado pela SMART e licitado pela SEMGE; adesões às atas da SMART).
+# Formato: ("rótulo que aparece na mensagem", r"expressão procurada no ato")
+ACOMPANHAR = [
+    ("Microfilmagem e gestão documental (TR da SMART, Pregão SEMGE 092/2026)", r"microfilmagem|gest[ãa]o documental"),
+    ("Plataforma multicanal / omnichannel", r"multicana|omnica|omnichannel|22293/2026|108975/2026"),
+    ("Fornecedor de ata/contrato da SMART", r"Green4T|TLD HUB|S3 DATA SECURITY|XSITE|IMAGEM GEOSISTEMAS"),
+]
+RE_ACOMPANHAR = [(rotulo, re.compile(rx, re.I)) for rotulo, rx in ACOMPANHAR]
 
 # Termos que indicam tecnologia
 TERMOS_TIC = [
     r"tecnologia da informa", r"\bTIC\b", r"software", r"\bSaaS\b", r"licen[çc]as? de (uso de )?(software|programas?)", r"cess[ãa]o de (direito de )?uso de (software|sistema)",
     r"licenciamento de (software|licen[çc]as)", r"nuvem", r"\bcloud\b", r"data ?center",
     r"desenvolvimento de sistemas?", r"sistemas? (de informa|informatizad|web)", r"sistema de gerenciamento",
-    r"link(s)? de (internet|dados|comunica)", r"redes? l[óo]gicas?", r"infraestrutura de redes?", r"cabeamento estruturado", r"sistemas? de alerta", r"outsourcing", r"loca[çc][ãa]o de (equipamentos de inform|computadores|impressoras|notebooks)", r"\binternet\b", r"fibra [óo]ptica", r"redes? de dados",
+    r"link(s)? de (internet|dados|comunica)", r"redes? l[óo]gicas?", r"microfilmagem", r"digitaliza[çc][ãa]o de (documentos|acervo)", r"gest[ãa]o (eletr[ôo]nica de )?documen", r"\bSSD\b", r"mem[óo]rias? RAM", r"webcams?", r"headsets?", r"nobreaks?", r"cabos? (de )?rede", r"materia(l|is) de rede", r"roteador", r"access point", r"pen ?drives?", r"\bHD externo", r"smartphones?", r"\bVoIP\b", r"\bSMP\b", r"\bSTFC\b", r"\bMPLS\b", r"SD-?WAN", r"sat[ée]lite", r"cibern[ée]tic", r"\bendpoints?\b", r"\bPCTIC\b", r"\bSGTIC\b", r"monitores? (de )?(v[íi]deo|led|lcd)", r"projetores?", r"\bscanners?\b", r"microcomputadores?", r"processamentos? (autom[áa]tico )?de dados", r"\bGPS\b", r"rastreadores?", r"plataforma web", r"inclus[ãa]o digital", r"infraestrutura de redes?", r"cabeamento estruturado", r"sistemas? de alerta", r"outsourcing", r"loca[çc][ãa]o de (equipamentos de inform|computadores|impressoras|notebooks)", r"\binternet\b", r"fibra [óo]ptica", r"redes? de dados",
     r"computador", r"notebook", r"microcomputador", r"servidor(es)? de (rede|dados|aplica)",
     r"ciberseguran", r"seguran[çc]a da informa", r"\bLGPD\b", r"telecomunica", r"telefonia",
     r"outsourcing de impress", r"impressoras?", r"transforma[çc][ãa]o digital", r"intelig[êe]ncia artificial",
@@ -77,7 +88,7 @@ DESCARTAR = [
 # Tópicos da mensagem: (chave, título, regex do cabeçalho do ato)
 TOPICOS = [
     ("contrato", "📝 *Contratos, aditivos e apostilamentos*",
-     r"(EXTRATO|RESUMO)\s+(D[OAE]S?\s+)?(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?(CONTRATO|TERMO|ADITIVO|APOSTILA|CONV[ÊE]NIO|ACORDO|RESCIS)|(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?TERMO\s+(ADITIVO|DE\s+(APOSTILA|PRORROGA|RESCIS|RERRATIFICA))|APOSTILAMENTO|AUTORIZA[ÇC][ÃA]O\s+DE\s+FORNECIMENTO|RESCIS[ÃA]O\s+(UNILATERAL|AMIG|CONTRATUAL|DO\s+CONTRATO)|RETIFICA[ÇC][ÃA]O\s+(DE|DO|DA)?\s*(RESUMO|EXTRATO|TERMO|CONTRATO)"),
+     r"(EXTRATO|RESUMO)\s+(D[OAE]S?\s+)?(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?(CONTRATO|TERMO|ADITIVO|APOSTILA|CONV[ÊE]NIO|ACORDO|RESCIS|AUTORIZA[ÇC][ÃA]O\s+DE\s+FORNECIMENTO)|(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?TERMO\s+(ADITIVO|DE\s+(APOSTILA|PRORROGA|RESCIS|RERRATIFICA))|APOSTILAMENTO|AUTORIZA[ÇC][ÃA]O\s+DE\s+FORNECIMENTO|RESCIS[ÃA]O\s+(UNILATERAL|AMIG|CONTRATUAL|DO\s+CONTRATO)|RETIFICA[ÇC][ÃA]O\s+(DE|DO|DA)?\s*(RESUMO|EXTRATO|TERMO|CONTRATO)"),
     ("resultado", "✅ *Resultados, homologações e atas*",
      r"(AVISO\s+DE\s+|TERMO\s+DE\s+|EXTRATO\s+D[AE]\s+)?(HOMOLOGA|ADJUDICA|RATIFICA|RESULTADO)|(EXTRATO\s+D[AE]\s+)?ATA\s+DE\s+REGISTRO\s+DE\s+PRE"),
     ("licitacao", "📢 *Licitações, cotações e editais*",
@@ -248,6 +259,8 @@ def ler_pdf(conteudo):
 
 RE_MENCAO = re.compile(
     r"Companhia Salvador Cidade Inteligente"          # nome da empresa
+    r"|Companhia de Governan[çc]a Eletr[ôo]nica|[-–/(]\s*COGEL\b"   # nome antigo (COGEL)
+    r"|\b(ATA|PREG[ÃA]O|PR)\b[^\n]{0,40}\bSMART\s+N"   # ata/pregão da SMART usado por outro órgão
     r"|\b637002\b"                                     # unidade orçamentária da SMART
     r"|[-–/]\s*SMART\b(?!\s+[A-ZÀ-Ú]{3,})"             # sigla após traço/barra: "... - SMART"
     r"|^\s*Smart\s+[-\d]", re.I)                      # linha de tabela por órgão: "Smart 3.403,56 ..."
@@ -297,9 +310,9 @@ def mencoes_equipe(conteudo, atos_equipe):
                 continue                                            # cabeçalho de seção
             if l[:40] in textos_equipe:                             # já está num ato da SMART
                 continue
-            titulos = [(abs(j - i) + (0 if j < i else 0.5), linhas[j]) for j in range(len(linhas))
+            titulos = [((0 if j < i else 1), abs(j - i), linhas[j]) for j in range(len(linhas))
                        if RE_TITULO_TABELA.search(linhas[j]) and len(linhas[j]) < 140]
-            titulo = min(titulos)[1] if titulos else "tabela"
+            titulo = min(titulos)[2] if titulos else "tabela"
             cab = next((c for rx, c in COLUNAS_CONHECIDAS if re.search(rx, titulo, re.I)), None) \
                 or [x for x in linhas if RE_CABECALHO_TABELA.search(x) and len(x) < 160][:6]
             chave = (n + 1, titulo)
@@ -322,7 +335,7 @@ def mencoes_equipe(conteudo, atos_equipe):
 ORGAO_PESSOAL = "SEMIT"
 RE_ORGAO_PESSOAL = re.compile(r"\bSEMIT\b|Secretaria\s+Municipal\s+de\s+Inova[çc][ãa]o\s+e\s+Tecnologia", re.I)
 RE_ATO_PESSOAL = re.compile(
-    r"(Nomear|Exonerar|Considerar\s+exonerad[oa]|Considerar\s+nomead[oa]"
+    r"(Nomear|Exonerar|Considerar,?\s+exonerad[oa]|Considerar,?\s+nomead[oa]"
     r"|Tornar\s+sem\s+efeito[^.]{0,120}?(?:nomea|exonera)\w*"
     r"|referente\s+[àa]\s+(?:nomea|exonera)\w*\s+de)", re.I)
 RE_FIM_ATO_PESSOAL = re.compile(
@@ -424,7 +437,13 @@ def separar_atos(linhas):
 def eh_da_equipe(ato):
     """Ato publicado pela SMART (cabeçalho do órgão ou nº do processo)."""
     return bool(RE_EQUIPE.search(ato["orgao"]) or re.search(
-        r"PROCESSO[^:\d]{0,15}:?\s*[\d./]+\s*[-–/]\s*SMART\b", ato["titulo"] + " " + ato["texto"], re.I))
+        r"PROCESSO[^:\d]{0,15}:?\s*[\d./]+\s*[-–/]\s*(SMART|COGEL)\b", ato["titulo"] + " " + ato["texto"], re.I))
+
+
+def acompanhado(ato):
+    """Rótulo do processo acompanhado pela equipe que o ato menciona, se houver."""
+    completo = ato["titulo"] + " " + ato["texto"]
+    return next((rotulo for rotulo, rx in RE_ACOMPANHAR if rx.search(completo)), None)
 
 
 def eh_relevante(ato):
@@ -432,6 +451,12 @@ def eh_relevante(ato):
     if eh_da_equipe(ato):
         ato["termo"] = f"órgão {ORGAO_EQUIPE} (todos os atos)"
         ato["topico"] = "equipe"
+        return True
+    rotulo = acompanhado(ato)
+    if rotulo:
+        ato["termo"] = f"acompanhado: {rotulo}"
+        ato["topico"] = "acompanhados"
+        ato["acompanhado"] = rotulo
         return True
     if RE_DESCARTAR.search(completo):
         return False
@@ -503,7 +528,7 @@ def resumir_ato(a):
     return linha + "\n   " + "\n   ".join(det)
 
 
-ORDEM_EXIBICAO = ["equipe", "pessoal", "licitacao", "contrato", "resultado", "outros"]
+ORDEM_EXIBICAO = ["equipe", "pessoal", "acompanhados", "licitacao", "contrato", "resultado", "outros"]
 
 
 def montar_por_regras(atos):
@@ -511,6 +536,7 @@ def montar_por_regras(atos):
     titulos = {k: t for k, t, _ in TOPICOS}
     titulos["equipe"] = f"🏢 *{ORGAO_EQUIPE} – todos os atos*"
     titulos["pessoal"] = f"👤 *{ORGAO_PESSOAL} – nomeações e exonerações*"
+    titulos["acompanhados"] = "🔎 *Processos acompanhados pela equipe*"
     for chave in ORDEM_EXIBICAO:
         titulo = titulos[chave]
         itens = [resumir_ato(a) for a in atos if a["topico"] == chave]
@@ -546,7 +572,9 @@ def montar_com_ia(atos, conteudo_pdf=None):
     """Usa OpenAI (OPENAI_API_KEY) ou Anthropic (ANTHROPIC_API_KEY), o que estiver cadastrado.
     Envia o texto pré-selecionado e as IMAGENS das páginas, para a IA conferir no original."""
     material = "\n\n".join(
-        f"[{i}] TIPO: {a['topico']} | ÓRGÃO: {a['orgao']} | PÁGINA: {a['pagina']}\n{a['titulo']}\n{a['texto'][:3000]}"
+        f"[{i}] TIPO: {a['topico']} | ÓRGÃO: {a['orgao']} | PÁGINA: {a['pagina']}"
+        + (f" | ACOMPANHADO: {a['acompanhado']}" if a.get("acompanhado") else "")
+        + f"\n{a['titulo']}\n{a['texto'][:3000]}"
         for i, a in enumerate(atos, 1))
     prompt = (
         "Você recebe atos do Diário Oficial do Município de Salvador pré-selecionados por "
@@ -569,6 +597,14 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "infraestrutura de TI, telecomunicações, serviços digitais) OU se o órgão confirmado for "
         "SEMIT ou SMART e o ato for contrato, licitação, resultado ou retificação deles. "
         "Descarte todo o resto, mesmo que cite alguma palavra técnica de passagem.\n"
+        "- COGEL (Companhia de Governança Eletrônica) é o NOME ANTIGO da SMART: trate atos e menções "
+        "da COGEL como da SMART.\n"
+        "- Itens com TIPO: acompanhados citam processos que a equipe da SMART acompanha, ainda que "
+        "publicados por outro órgão (o campo ACOMPANHADO diz qual). Se a imagem confirmar a relação, "
+        "coloque-os no tópico 🔎 *Processos acompanhados pela equipe*, logo após o 👤, e termine o item "
+        "com a linha 'Acompanhamento: <rótulo>'. Se a relação for só coincidência de palavra, descarte.\n"
+        "- Menções a atas ou pregões da SMART em atos de outros órgãos (ex.: adesão ou AFM com base em "
+        "'Ata SMART nº ...') são da SMART: inclua no tópico 🏢 dizendo qual órgão usou a ata.\n"
         "- EXCEÇÃO: TODO ato da SMART (Companhia Salvador Cidade Inteligente) entra, de qualquer "
         "tipo e assunto (portarias, nomeações, dispensas, compras comuns, contratos etc.). Os atos "
         "marcados com TIPO: equipe PROVAVELMENTE são da SMART, mas confirme pelo texto: se o ato for "
@@ -585,7 +621,13 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "coloque-os num tópico próprio, logo após o da SMART: 👤 *SEMIT – nomeações e exonerações*. "
         "Um item por pessoa, em UMA linha: '• *Nomeação* – NOME, cargo (e grau) _(pág. N)_' ou "
         "'• *Exoneração* – NOME, cargo, a pedido se constar _(pág. N)_'. Não inclua nomeações e "
-        "exonerações de outros órgãos.\n"
+        "exonerações de outros órgãos. Este tópico aparece SEMPRE; se não houver nenhuma, escreva "
+        "apenas: _Nenhuma nomeação ou exoneração nesta edição._\n"
+        "- Atos NORMATIVOS sobre TIC também entram, mesmo sem 'objeto' de contratação: decretos, "
+        "portarias e instruções normativas que tratem de política ou governança de TIC, telefonia "
+        "corporativa, segurança da informação, LGPD, sistemas corporativos, comitês de TIC, ou que "
+        "atribuam competências à SEMIT ou à SMART. Coloque-os em 📌 *Outros atos* com um resumo do que "
+        "o ato determina.\n"
         "- São sempre descartados, salvo se o objeto for de TI ou o ato for da SMART: patrocínios, eventos, shows e "
         "atrações artísticas, permissões e concessões de uso de espaço, seguros, material esportivo, "
         "de limpeza, hospitalar ou de escritório.\n"
@@ -593,7 +635,7 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "- Se um ato parecer misturar trechos de atos diferentes, use só a parte coerente com o título.\n"
         "Formato (Google Chat):\n"
         "- Tópicos nesta ordem, omitindo os vazios:\n"
-        "  🏢 *SMART – todos os atos*\n  👤 *SEMIT – nomeações e exonerações*\n  📢 *Licitações, cotações e editais*\n  📝 *Contratos, aditivos e apostilamentos*\n"
+        "  🏢 *SMART – todos os atos*\n  👤 *SEMIT – nomeações e exonerações*\n  🔎 *Processos acompanhados pela equipe*\n  📢 *Licitações, cotações e editais*\n  📝 *Contratos, aditivos e apostilamentos*\n"
         "  ✅ *Resultados, homologações e atas*\n  📌 *Outros atos*\n"
         "- Cada item deve ser informativo, com até 5 linhas:\n"
         "  • *SIGLA* – Tipo e número do ato em letras normais, não maiúsculas (ex.: Aviso de cotação nº 016/2026). "
@@ -682,6 +724,35 @@ def enviar_chat(texto):
         requests.post(webhook, json={"text": p}, timeout=30).raise_for_status()
 
 
+TITULO_PESSOAL = f"👤 *{ORGAO_PESSOAL} – nomeações e exonerações*"
+TEXTO_PESSOAL_VAZIO = "_Nenhuma nomeação ou exoneração nesta edição._"
+EMOJIS_SECAO = ("🏢", "👤", "🔎", "📢", "📝", "✅", "📌")
+
+
+def garantir_secao_pessoal(corpo):
+    """A seção de nomeações/exonerações da SEMIT aparece SEMPRE, logo após a da SMART."""
+    linhas = corpo.split("\n")
+    idx = next((i for i, l in enumerate(linhas) if "nomeações e exonerações" in l), None)
+    if idx is not None:
+        linhas[idx] = TITULO_PESSOAL
+        fim = next((i for i in range(idx + 1, len(linhas)) if linhas[i].lstrip().startswith(EMOJIS_SECAO)), len(linhas))
+        tem_item = any(l.lstrip().startswith("•") for l in linhas[idx + 1:fim])
+        if tem_item:
+            for i in range(idx + 1, fim):     # remove "nenhum..." se houver itens reais
+                if re.search(r"(?i)nenhum", linhas[i]) and not linhas[i].lstrip().startswith("•"):
+                    linhas[i] = ""
+        else:                                  # sem itens: texto padrão
+            linhas[idx + 1:fim] = [TEXTO_PESSOAL_VAZIO, ""]
+        return re.sub(r"\n{3,}", "\n\n", "\n".join(linhas)).strip()
+    bloco = f"{TITULO_PESSOAL}\n{TEXTO_PESSOAL_VAZIO}"
+    i_smart = next((i for i, l in enumerate(linhas) if l.lstrip().startswith("🏢")), None)
+    if i_smart is None:
+        return (bloco + "\n\n" + corpo).strip()
+    fim = next((i for i in range(i_smart + 1, len(linhas)) if linhas[i].lstrip().startswith(EMOJIS_SECAO)), len(linhas))
+    novo = linhas[:fim] + ["", bloco, ""] + linhas[fim:]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(novo)).strip()
+
+
 def gerar_mensagem(url_pdf, conteudo_pdf):
     edicao, data = dados_da_edicao(url_pdf)
     todos = separar_atos(ler_pdf(conteudo_pdf))
@@ -712,6 +783,7 @@ def gerar_mensagem(url_pdf, conteudo_pdf):
             corpo = montar_por_regras(atos) + "\n\n_⚠️ Resumo sem IA: a IA não respondeu nesta edição._"
     else:
         corpo = montar_por_regras(atos)
+    corpo = garantir_secao_pessoal(corpo)
     # Conta os itens da mensagem final (depois do filtro da IA, se houver)
     n = len(re.findall(r"^\s*•", corpo, re.M))
     qtd = f" · {n} ato(s)" if n else ""
