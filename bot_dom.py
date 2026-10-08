@@ -898,6 +898,8 @@ def gerar_mensagem(url_pdf, conteudo_pdf):
     else:
         corpo = montar_por_regras(atos)
     corpo = garantir_secao_pessoal(corpo)
+    # Uma linha em branco antes de cada item (a IA às vezes esquece)
+    corpo = re.sub(r"(?m)^([^\n]*\S[^\n]*)\n(?=[ \t]*•)", r"\1\n\n", corpo)
     # Conta os itens da mensagem final (depois do filtro da IA, se houver)
     n = len(re.findall(r"^\s*•", corpo, re.M))
     qtd = f" · {n} ato(s)" if n else ""
