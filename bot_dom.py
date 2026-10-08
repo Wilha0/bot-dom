@@ -15,6 +15,7 @@ Variáveis de ambiente:
   OPENAI_MODEL        (opcional) modelo da OpenAI; padrão: gpt-5-mini
   ANTHROPIC_API_KEY   (opcional) chave da Anthropic (sk-ant-...), alternativa à OpenAI
   ANTHROPIC_MODEL     (opcional) modelo Claude; padrão: claude-sonnet-5
+  ANTHROPIC_EFFORT    (opcional) esforço da IA Claude: low, medium ou high; padrão: medium
   FORCAR_ENVIO        (opcional) "sim" reenvia a edição mesmo que já tenha sido enviada
   TESTE               (opcional) "sim" gera a mensagem só no log, sem enviar ao Google Chat
   DIAGNOSTICO         (opcional) "sim" mostra o motivo de cada item e lista todos os atos no log
@@ -77,12 +78,22 @@ FALSOS_POSITIVOS = [
     r"sess[ãa]o p[úu]blica (eletr[ôo]nica|virtual)", r"portal de compras",
     r"licen[çc]a de uso de (espa[çc]o|[áa]rea|equipamento urbano)", r"servi[çc]os? reprogr[áa]fic\w*",
     r"(por meio|atrav[ée]s) (da|do) (internet|plataforma|sistema)", r"endere[çc]o eletr[ôo]nico", r"s[íi]tio eletr[ôo]nico",
+    # nome de setor (ex.: "núcleo de tecnologia da informação (NTI)") não indica compra de TI
+    r"(n[úu]cleo|setor|coordenadoria|coordena[çc][ãa]o|diretoria|ger[êe]ncia|departamento|assessoria|divis[ãa]o) de tecnologia( da informa[çc][ãa]o)?( e comunica[çc][ãa]o)?",
+    # nome de empresa (ex.: "BP MONEY TECNOLOGIA DA INFORMAÇÃO LTDA")
+    r"tecnologia da informa[çc][ãa]o\s+(ltda|s\.?/?a\b|eireli|me\b|epp\b)",
 ]
 
 # Atos descartados mesmo que citem tecnologia
 DESCARTAR = [
     r"suplementa[çc][ãa]o", r"cr[ée]dito suplementar", r"\bnomear\b", r"\bexonerar\b",
     r"\bf[ée]rias\b", r"\baposentadoria\b", r"licen[çc]a[- ]pr[êe]mio",
+]
+
+# Descartados quando o ato é de OUTRO órgão (SEMIT e SMART continuam entrando)
+DESCARTAR_OUTROS_ORGAOS = [
+    r"patroc[íi]nio", r"atra[çc][ãa]o art[íi]stica", r"servi[çc]os? reprogr[áa]fic",
+    r"\bdesignar\b.{0,200}\b(fiscal|fiscais|gestor|gestores|fiscaliza[çc][ãa]o|gest[ãa]o)\b",
 ]
 
 # Tópicos da mensagem: (chave, título, regex do cabeçalho do ato)
@@ -94,7 +105,7 @@ TOPICOS = [
     ("licitacao", "📢 *Licitações, cotações e editais*",
      r"AVISO\s+DE\s+(LICITA|PREG|CONCORR|COTA|DISPENSA|CHAMAMENTO|INTEN|SESS|REABERTURA|ADIAMENTO|SUSPENS|RETIFICA|REVOGA|ANULA|CREDENCIA|CONVOCA)|AVISO\s+DE\s+CONTRATA|EDITAL|CHAMAMENTO\s+P[ÚU]BLICO|INTEN[ÇC][ÃA]O\s+DE\s+REGISTRO|DISPENSA\s+(DE\s+LICITA|ELETR)|INEXIGIBILIDADE"),
     ("outros", "📌 *Outros atos*",
-     r"PORTARIA\s+N|DECRETO\s+N|RESOLU[ÇC][ÃA]O\s+N|INSTRU[ÇC][ÃA]O\s+NORMATIVA|EXTRATO\b|AVISO\b|DESPACHO|COMUNICADO|DELIBERA[ÇC][ÃA]O|ATO\s+(N|D[OA]\s)|ATA\s+D[AE]|ERRATA|EDITAL\b|NOTIFICA[ÇC][ÃA]O|CONVOCA[ÇC][ÃA]O"),
+     r"PORTARIA(\s+CONJUNTA)?\s+N|DECRETO\s+N|RESOLU[ÇC][ÃA]O\s+N|INSTRU[ÇC][ÃA]O\s+NORMATIVA|EXTRATO\b|AVISO\b|DESPACHO|COMUNICADO|DELIBERA[ÇC][ÃA]O|ATO\s+(N|D[OA]\s)|ATA\s+D[AE]|ERRATA|EDITAL\b|NOTIFICA[ÇC][ÃA]O|CONVOCA[ÇC][ÃA]O"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -102,6 +113,11 @@ TOPICOS = [
 RE_TIC = re.compile("|".join(TERMOS_TIC), re.I)
 RE_FALSO = re.compile("|".join(FALSOS_POSITIVOS), re.I)
 RE_DESCARTAR = re.compile("|".join(DESCARTAR), re.I)
+RE_DESCARTAR_OUTROS = re.compile("|".join(DESCARTAR_OUTROS_ORGAOS), re.I | re.S)
+# Nome por extenso da SMART (ou da antiga COGEL) dentro do texto de um ato de outro órgão,
+# ex.: portarias conjuntas SEMIT/SMART publicadas sob o cabeçalho da SEMIT
+RE_EQUIPE_NO_TEXTO = re.compile(
+    r"Companhia\s+Salvador\s+Cidade\s+Inteligente|Companhia\s+de\s+Governan[çc]a\s+Eletr[ôo]nica", re.I)
 RE_SEMPRE = re.compile(r"\b(" + "|".join(ORGAOS_SEMPRE) + r")\b")
 RE_PROCESSO_SEMPRE = re.compile(r"PROCESSO[^:\d]{0,15}:?\s*[\d./]+\s*[-–/]\s*(" + "|".join(ORGAOS_SEMPRE) + r")\b", re.I)
 TOPICOS_RE = [(k, t, re.compile(r"^\s*(" + r + ")")) for k, t, r in TOPICOS]
@@ -418,6 +434,12 @@ def separar_atos(linhas):
                     if i + 1 < len(linhas) and (re.search(r"(N[º°o]\.?|AO|DO|DA|DE|-)$", l) or re.fullmatch(r"[\d./A-Z-]{3,20}", linhas[i + 1][1])):
                         titulo += " " + linhas[i + 1][1]
                         i += 1
+                    if (atual and atual["orgao"] == orgao and atual["pagina"] == pag
+                            and len(" ".join(atual["linhas"])) < 60):
+                        # O ato anterior só tinha subtítulos (ex.: "EXTRATO ... ATA Nº 005/2025",
+                        # "PREGÃO Nº ...", "PRIMEIRO TERMO ADITIVO Nº ..."): é o mesmo ato
+                        atual["linhas"].append(titulo)
+                        break
                     atual = {"topico": chave, "titulo": titulo, "orgao": orgao, "pagina": pag, "linhas": []}
                     atos.append(atual)
                     break
@@ -431,13 +453,41 @@ def separar_atos(linhas):
         a["texto"] = re.sub(r"\s+", " ", " ".join(a["linhas"])).strip()
         m = re.search(r"-\s*([A-Z]{2,12})$", a["orgao"])
         a["sigla"] = m.group(1) if m else (a["orgao"].title()[:45] or "Órgão não identificado")
-    return atos
+    return dividir_afms(atos)
+
+
+RE_INICIO_AFM = re.compile(r"\bAFM\s*(N[º°o.]*)?\s*:?\s*\d{6,}")
+
+
+def dividir_afms(atos):
+    """Um bloco 'AUTORIZAÇÃO DE FORNECIMENTO' costuma listar várias AFMs (empresas e objetos
+    diferentes) sob um único título. Separa cada AFM num ato próprio."""
+    saida = []
+    for a in atos:
+        inicios = [m.start() for m in RE_INICIO_AFM.finditer(a["texto"])]
+        if len(inicios) < 2 or not re.search(r"AUTORIZA[ÇC][ÃA]O\s+DE\s+FORNECIMENTO|\bAFM\b", a["titulo"], re.I):
+            saida.append(a)
+            continue
+        inicios[0] = 0
+        for ini, fim in zip(inicios, inicios[1:] + [len(a["texto"])]):
+            parte = dict(a)
+            parte["texto"] = a["texto"][ini:fim].strip()
+            num = RE_INICIO_AFM.search(parte["texto"])
+            if num:
+                numero = re.search(r"\d{6,}", num.group(0)).group(0)
+                base = re.sub(r"\s*[-–]\s*AFM\s*$", "", a["titulo"], flags=re.I)
+                parte["titulo"] = f"{base} Nº {numero}"
+            saida.append(parte)
+    return saida
 
 
 def eh_da_equipe(ato):
-    """Ato publicado pela SMART (cabeçalho do órgão ou nº do processo)."""
-    return bool(RE_EQUIPE.search(ato["orgao"]) or re.search(
-        r"PROCESSO[^:\d]{0,15}:?\s*[\d./]+\s*[-–/]\s*(SMART|COGEL)\b", ato["titulo"] + " " + ato["texto"], re.I))
+    """Ato da SMART: cabeçalho do órgão, nº do processo ou nome da Companhia no texto
+    (ex.: portaria conjunta SEMIT/SMART publicada sob o cabeçalho da SEMIT)."""
+    completo = ato["titulo"] + " " + ato["texto"]
+    return bool(RE_EQUIPE.search(ato["orgao"])
+                or re.search(r"PROCESSO[^:\d]{0,15}:?\s*[\d./]+\s*[-–/]\s*(SMART|COGEL)\b", completo, re.I)
+                or RE_EQUIPE_NO_TEXTO.search(completo))
 
 
 def acompanhado(ato):
@@ -451,6 +501,8 @@ def eh_relevante(ato):
     if eh_da_equipe(ato):
         ato["termo"] = f"órgão {ORGAO_EQUIPE} (todos os atos)"
         ato["topico"] = "equipe"
+        if ORGAO_EQUIPE not in ato["sigla"] and not RE_EQUIPE.search(ato["orgao"]):
+            ato["sigla"] = f"{ato['sigla']}/{ORGAO_EQUIPE}"     # ex.: portaria conjunta SEMIT/SMART
         return True
     rotulo = acompanhado(ato)
     if rotulo:
@@ -463,6 +515,8 @@ def eh_relevante(ato):
     if ato["topico"] != "outros" and (RE_SEMPRE.search(ato["orgao"]) or RE_PROCESSO_SEMPRE.search(completo)):
         ato["termo"] = "órgão " + ", ".join(ORGAOS_SEMPRE)
         return True
+    if RE_DESCARTAR_OUTROS.search(completo):
+        return False
     termos = {m.group(0).lower() for m in RE_TIC.finditer(RE_FALSO.sub(" ", completo))}
     ato["termo"] = ", ".join(sorted(termos))
     # "Outros atos" (portarias, decretos...) exigem ao menos 2 termos diferentes
@@ -501,9 +555,18 @@ def resumir_ato(a):
         linhas = "\n   ".join(l[:300] for l in a["linhas_mencao"][:5])
         return f"• *SMART* – {a['titulo'][:110]} _(pág. {a['pagina']})_\n   {linhas}"
     t = a["texto"]
+    # Designação de gestor/fiscal (ex.: portarias conjuntas SEMIT/SMART)
+    m = re.search(r"Designar\b.{0,200}?Contrato\s+([A-Z]+\s+)?n[º°o.]*\s*([\w/.-]+),?\s+celebrado com a empresa\s+(.+?)(?:\.\s|\s+[ÓO]RG[ÃA]O\b|$)", t, re.I | re.S)
+    if m:
+        orgao_ct = (m.group(1) or "").strip()
+        return (f"• *{a['sigla']}* – {titulo_legivel(a['titulo'])} _(pág. {a['pagina']})_\n"
+                f"   Designa gestor e fiscal setoriais da SMART no Contrato {orgao_ct + ' ' if orgao_ct else ''}"
+                f"nº {m.group(2).rstrip('.,')} ({m.group(3).strip().rstrip('.')})")
     objeto = campo(r"OBJETO\s*(?:DO\s+\w+\s*)?[:\-–]\s*(.+?)(?=\s+(?-i:VALOR|VIG[ÊE]NCIA|PRAZO|CONTRATAD[AO]|DOTA[ÇC][ÃA]O|FUNDAMENTO|AMPARO LEGAL|DATA DA ASSINATURA|PROCESSO)[^:.]{0,15}:|$)", t) \
         or campo(r"(?:tem por (?:objeto|finalidade)|objetivando a?|visando a?)\s+(.+?)(?:[.;]\s|$)", t) \
         or campo(r"(contrata[çc][ãa]o de .+?)(?:[.;]\s|,\s+com a abertura|$)", t)
+    if objeto:
+        objeto = re.split(r"\s+(?:Dota[çc][ãa]o\s+Or[çc]ament|Fonte\s*:|Valor\s*:)", objeto, flags=re.I)[0]
     empresa = campo(r"(?:CONTRATAD[AO]|EMPRESA|FORNECEDOR|ADJUDICAT[ÁA]RI[AO]|VENCEDOR[A]?)\s*[:\-–]\s*(.+?)(?=,|\s+CNPJ|\s+-\s|\.\s|;|$)", t, 90)
     valor = campo(r"VALOR[^:R]{0,30}:?\s*(R\$\s?[\d.]+,\d{2})", t, 30) \
         or campo(r"valor (?:total|global|estimado|mensal|anual)[^R]{0,20}(R\$\s?[\d.]+,\d{2})", t, 30) \
@@ -546,6 +609,11 @@ def montar_por_regras(atos):
 
 
 MAX_PAGINAS_IMAGEM = 8
+
+# IA Claude: o pensamento interno da IA conta dentro do limite de tokens da resposta.
+# Com limite baixo, edições grandes podem gastar tudo pensando e devolver resposta vazia.
+MAX_TOKENS_IA = 32000          # teto (só é cobrado o que for usado)
+ESFORCO_IA = os.environ.get("ANTHROPIC_EFFORT") or "medium"   # low | medium | high
 
 
 def imagens_das_paginas(conteudo_pdf, atos):
@@ -603,6 +671,10 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "publicados por outro órgão (o campo ACOMPANHADO diz qual). Se a imagem confirmar a relação, "
         "coloque-os no tópico 🔎 *Processos acompanhados pela equipe*, logo após o 👤, e termine o item "
         "com a linha 'Acompanhamento: <rótulo>'. Se a relação for só coincidência de palavra, descarte.\n"
+        "- Portarias conjuntas SEMIT/SMART (ou outras) que designam servidores da SMART como gestores ou "
+        "fiscais de contratos são da SMART: um item por portaria, dizendo o contrato, a empresa e quem foi "
+        "designado gestor e fiscal (nome e papel). Nesses atos de designação, os nomes dos servidores "
+        "DEVEM aparecer, ao contrário da regra geral.\n"
         "- Menções a atas ou pregões da SMART em atos de outros órgãos (ex.: adesão ou AFM com base em "
         "'Ata SMART nº ...') são da SMART: inclua no tópico 🏢 dizendo qual órgão usou a ata.\n"
         "- EXCEÇÃO: TODO ato da SMART (Companhia Salvador Cidade Inteligente) entra, de qualquer "
@@ -654,7 +726,8 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "Escreva assim: 'Sessão 30/09/2026 às 9h30' ou 'Propostas até 21/09/2026'.\n"
         "- Retificações: um único item, dizendo em uma linha o que mudou (de X para Y) e citando "
         "a publicação corrigida. Nunca separe 'onde se lê' e 'leia-se' em itens diferentes.\n"
-        "- Não inclua telefones, e-mails, fundamentação legal nem nomes de servidores.\n"
+        "- Não inclua telefones, e-mails, fundamentação legal nem nomes de servidores (exceto nas "
+        "designações de gestores e fiscais da SMART e nas nomeações e exonerações da SEMIT).\n"
         "- Separe itens com uma linha em branco. Use *negrito* e _itálico_; sem # e sem tabelas.\n"
         "- Não invente dados.\n"
         "- Não escreva frases de fechamento, observações finais nem 'Nenhum outro ato de TIC "
@@ -696,15 +769,56 @@ def montar_com_ia(atos, conteudo_pdf=None):
         conteudo.append({"type": "text", "text": f"Imagem da página {p}:"})
         conteudo.append({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}})
     conteudo.append({"type": "text", "text": prompt})
-    r = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01",
-                 "content-type": "application/json"},
-        json={"model": os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-5", "max_tokens": 8000,
-              "messages": [{"role": "user", "content": conteudo}]},
-        timeout=300)
+    texto, motivo = chamar_anthropic(conteudo, ESFORCO_IA)
+    if not texto and ESFORCO_IA != "low":
+        # Resposta vazia (ex.: gastou o limite pensando): tenta de novo pensando menos
+        print(f"AVISO: a IA não devolveu texto (motivo: {motivo}). Nova tentativa com esforço 'low'.")
+        texto, motivo = chamar_anthropic(conteudo, "low")
+    if not texto:
+        raise ValueError(f"resposta vazia da IA (motivo: {motivo})")
+    return texto
+
+
+def chamar_anthropic(conteudo, esforco):
+    """Chama a API da Anthropic. Devolve (texto, motivo_de_parada) e registra o uso no log."""
+    modelo = os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-5"
+    corpo = {"model": modelo, "max_tokens": MAX_TOKENS_IA,
+             "messages": [{"role": "user", "content": conteudo}]}
+    if esforco:
+        corpo["output_config"] = {"effort": esforco}
+
+    def enviar():
+        return requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            json=corpo, timeout=360)
+
+    r = enviar()
+    if r.status_code in (429, 500, 502, 503, 504, 529):
+        # Sobrecarga ou instabilidade passageira da API: espera e tenta uma vez mais
+        print(f"AVISO: a API da Anthropic respondeu {r.status_code}. Nova tentativa em 30 s.")
+        time.sleep(30)
+        r = enviar()
+    if r.status_code == 400 and "output_config" in corpo and "effort" in r.text:
+        # Modelo sem suporte ao parâmetro de esforço: repete sem ele
+        print("AVISO: o modelo não aceita o parâmetro de esforço. Repetindo sem ele.")
+        corpo.pop("output_config")
+        r = enviar()
+    if r.status_code >= 400:
+        print(f"AVISO: erro da API da Anthropic {r.status_code}: {r.text[:300]}")
     r.raise_for_status()
-    return "".join(b.get("text", "") for b in r.json()["content"]).strip()
+    j = r.json()
+    texto = "".join(b.get("text", "") for b in j.get("content", []) if b.get("type") == "text").strip()
+    uso = j.get("usage") or {}
+    motivo = j.get("stop_reason")
+    print(f"IA: modelo {modelo} · esforço {corpo.get('output_config', {}).get('effort', 'padrão')} · "
+          f"parada: {motivo} · tokens de entrada: {uso.get('input_tokens')} · tokens de saída: {uso.get('output_tokens')}")
+    if motivo == "max_tokens" and texto:
+        print("AVISO: a resposta da IA foi cortada pelo limite de tokens.")
+    if motivo == "refusal":
+        print(f"AVISO: a IA recusou a resposta ({j.get('stop_details')}).")
+    return texto, motivo
 
 
 # ------------------------------- ENVIO -------------------------------------
