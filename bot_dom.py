@@ -823,19 +823,40 @@ def chamar_anthropic(conteudo, esforco):
 
 # ------------------------------- ENVIO -------------------------------------
 
-def enviar_chat(texto):
-    """Divide em mensagens de até ~3.900 caracteres, sem cortar itens ao meio."""
-    webhook = os.environ["GCHAT_WEBHOOK_URL"]
+def dividir_mensagem(texto, limite, medir):
+    """Divide o texto em partes que respeitam o limite, sem cortar itens ao meio."""
     partes, atual = [], ""
     for bloco in texto.split("\n\n"):
-        if len(atual) + len(bloco) + 2 > 3900 and atual:
+        candidato = (atual + "\n\n" + bloco) if atual else bloco
+        if medir(candidato) > limite and atual:
             partes.append(atual)
-            atual = ""
-        atual = (atual + "\n\n" + bloco) if atual else bloco[:3900]
+            candidato = bloco
+        while medir(candidato) > limite:          # bloco sozinho maior que o limite
+            corte = len(candidato) * limite // medir(candidato)
+            partes.append(candidato[:corte])
+            candidato = candidato[corte:]
+        atual = candidato
     if atual:
         partes.append(atual)
-    for p in partes:
+    return partes
+
+
+def enviar_chat(texto):
+    """Envia ao Google Chat. O limite do Chat é 32.000 bytes por mensagem, então quase
+    sempre vai numa mensagem só; acima disso, divide sem cortar itens ao meio."""
+    webhook = os.environ["GCHAT_WEBHOOK_URL"]
+    partes = dividir_mensagem(texto, 30000, lambda t: len(t.encode("utf-8")))
+    r = requests.post(webhook, json={"text": partes[0]}, timeout=30)
+    if r.status_code == 400 and len(partes[0]) > 3900:
+        # Se o Chat recusar a mensagem longa, volta ao envio em partes menores
+        print("AVISO: o Google Chat recusou a mensagem longa. Enviando em partes menores.")
+        partes = dividir_mensagem(texto, 3900, len)
+        r = requests.post(webhook, json={"text": partes[0]}, timeout=30)
+    r.raise_for_status()
+    for p in partes[1:]:
         requests.post(webhook, json={"text": p}, timeout=30).raise_for_status()
+    if len(partes) > 1:
+        print(f"Mensagem enviada em {len(partes)} partes.")
 
 
 TITULO_PESSOAL = f"👤 *{ORGAO_PESSOAL} – nomeações e exonerações*"
