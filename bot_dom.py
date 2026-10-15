@@ -82,6 +82,7 @@ FALSOS_POSITIVOS = [
     r"(n[úu]cleo|setor|coordenadoria|coordena[çc][ãa]o|diretoria|ger[êe]ncia|departamento|assessoria|divis[ãa]o) de tecnologia( da informa[çc][ãa]o)?( e comunica[çc][ãa]o)?",
     # nome de empresa (ex.: "BP MONEY TECNOLOGIA DA INFORMAÇÃO LTDA")
     r"tecnologia da informa[çc][ãa]o\s+(ltda|s\.?/?a\b|eireli|me\b|epp\b)",
+    r"inform[áa]tica\s+(ltda|s\.?/?a\b|eireli|me\b|epp\b)",
 ]
 
 # Atos descartados mesmo que citem tecnologia
@@ -105,7 +106,7 @@ TOPICOS = [
     ("licitacao", "📢 *Licitações, cotações e editais*",
      r"AVISO\s+DE\s+(LICITA|PREG|CONCORR|COTA|DISPENSA|CHAMAMENTO|INTEN|SESS|REABERTURA|ADIAMENTO|SUSPENS|RETIFICA|REVOGA|ANULA|CREDENCIA|CONVOCA)|AVISO\s+DE\s+CONTRATA|EDITAL|CHAMAMENTO\s+P[ÚU]BLICO|INTEN[ÇC][ÃA]O\s+DE\s+REGISTRO|DISPENSA\s+(DE\s+LICITA|ELETR)|INEXIGIBILIDADE"),
     ("outros", "📌 *Outros atos*",
-     r"PORTARIA(\s+CONJUNTA)?\s+N|DECRETO\s+N|RESOLU[ÇC][ÃA]O\s+N|INSTRU[ÇC][ÃA]O\s+NORMATIVA|EXTRATO\b|AVISO\b|DESPACHO|COMUNICADO|DELIBERA[ÇC][ÃA]O|ATO\s+(N|D[OA]\s)|ATA\s+D[AE]|ERRATA|EDITAL\b|NOTIFICA[ÇC][ÃA]O|CONVOCA[ÇC][ÃA]O"),
+     r"PORTARIA(\s+CONJUNTA|\s+[A-Z]{2,12})?\s+N|DECRETO\s+N|RESOLU[ÇC][ÃA]O(\s+[A-Z]{2,12})?\s+N|INSTRU[ÇC][ÃA]O\s+NORMATIVA|EXTRATO\b|AVISO\b|DESPACHO|COMUNICADO|DELIBERA[ÇC][ÃA]O|ATO\s+(N|D[OA]\s)|ATA\s+D[AE]|ERRATA|EDITAL\b|NOTIFICA[ÇC][ÃA]O|CONVOCA[ÇC][ÃA]O"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -398,6 +399,36 @@ def maiusculo(l):
     return len(letras) >= 4 and sum(c.isupper() for c in letras) / len(letras) > 0.85
 
 
+TITULO_ORFAO = "ATO SEM TÍTULO PADRÃO"
+
+
+def continuar_ou_abrir_orfao(atos, atual, orgao, pag, l):
+    """Linha que não é título nem cabeçalho. Se há um ato aberto, continua nele. Se acabou de
+    aparecer o cabeçalho de um órgão e o ato tem título fora do padrão (ex.: 'AQUISIÇÃO DE
+    MICROCOMPUTADORES'), abre um ato 'órfão' para não perder o texto."""
+    if atual:
+        atual["linhas"].append(l)
+        return atual
+    if not orgao:
+        return None                       # capa e sumário, antes do primeiro órgão
+    titulo_ok = maiusculo(l[:60]) and len(l) < 110
+    novo = {"topico": "outros", "titulo": l if titulo_ok else TITULO_ORFAO, "orgao": orgao,
+            "pagina": pag, "linhas": [] if titulo_ok else [l], "orfao": True}
+    atos.append(novo)
+    return novo
+
+
+def topico_por_conteudo(texto, titulo=""):
+    """Tópico de um ato sem título padrão: pelo título (procurando em qualquer parte dele)
+    e, se não der, pelo conteúdo."""
+    for chave, _, padrao in TOPICOS:          # padrões sem âncora: o tipo pode vir no meio
+        if chave != "outros" and re.search(padrao, titulo):
+            return chave
+    if re.search(r"\bOBJETO\s*:", texto, re.I) and re.search(r"\b(VALOR|EMPRESA|CONTRATAD[AO]|FORNECEDOR)\b", texto, re.I):
+        return "contrato"
+    return "outros"
+
+
 def separar_atos(linhas):
     atos, atual, orgao = [], None, ""
     i = 0
@@ -434,26 +465,45 @@ def separar_atos(linhas):
                     if i + 1 < len(linhas) and (re.search(r"(N[º°o]\.?|AO|DO|DA|DE|-)$", l) or re.fullmatch(r"[\d./A-Z-]{3,20}", linhas[i + 1][1])):
                         titulo += " " + linhas[i + 1][1]
                         i += 1
+                    herdadas = []
+                    if (atual and atual.get("orfao") and atual["orgao"] == orgao
+                            and len(" ".join(atual["linhas"])) < 60):
+                        # Ato "sem título" que na verdade era só um subtítulo: junta ao ato que começa
+                        atos.remove(atual)
+                        herdadas = ([] if atual["titulo"] == TITULO_ORFAO else [atual["titulo"]]) + atual["linhas"]
+                        atual = None
                     if (atual and atual["orgao"] == orgao and atual["pagina"] == pag
                             and len(" ".join(atual["linhas"])) < 60):
                         # O ato anterior só tinha subtítulos (ex.: "EXTRATO ... ATA Nº 005/2025",
                         # "PREGÃO Nº ...", "PRIMEIRO TERMO ADITIVO Nº ..."): é o mesmo ato
                         atual["linhas"].append(titulo)
                         break
-                    atual = {"topico": chave, "titulo": titulo, "orgao": orgao, "pagina": pag, "linhas": []}
+                    atual = {"topico": chave, "titulo": titulo, "orgao": orgao, "pagina": pag, "linhas": herdadas}
                     atos.append(atual)
                     break
             else:
-                if atual:
-                    atual["linhas"].append(l)
-        elif atual:
-            atual["linhas"].append(l)
+                atual = continuar_ou_abrir_orfao(atos, atual, orgao, pag, l)
+        else:
+            atual = continuar_ou_abrir_orfao(atos, atual, orgao, pag, l)
         i += 1
     for a in atos:
         a["texto"] = re.sub(r"\s+", " ", " ".join(a["linhas"])).strip()
+        if a.get("orfao"):
+            a["topico"] = topico_por_conteudo(a["texto"], a["titulo"])
         m = re.search(r"-\s*([A-Z]{2,12})$", a["orgao"])
         a["sigla"] = m.group(1) if m else (a["orgao"].title()[:45] or "Órgão não identificado")
-    return dividir_afms(atos)
+    return dividir_afms([a for a in atos if not orfao_invalido(a)])
+
+
+def orfao_invalido(a):
+    """Atos 'sem título padrão' que na verdade são capa, sumário ou tabelas (descartados)."""
+    if not a.get("orfao"):
+        return False
+    t = a["texto"]
+    if a["pagina"] == 1 or len(t) < 40 or len(t) > 8000:
+        return True
+    palavras = t.split()
+    return sum(len(p) == 1 for p in palavras) > 0.3 * max(len(palavras), 1)   # "R e c e i t a"
 
 
 RE_INICIO_AFM = re.compile(r"\bAFM\s*(N[º°o.]*)?\s*:?\s*\d{6,}")
@@ -479,6 +529,52 @@ def dividir_afms(atos):
                 parte["titulo"] = f"{base} Nº {numero}"
             saida.append(parte)
     return saida
+
+
+# ------------- COMPRAS DE OUTROS ÓRGÃOS PELAS ATAS DA SEMIT / SMART -------------
+# Ex.: "aquisição de 16 microcomputadores, utilizando a Ata de Registro de Preços nº 202600009 SEMIT"
+RE_USO_ATA = re.compile(
+    r"(?:Ata\s+de\s+Registro\s+de\s+Pre[çc]os?|\bARP\b)[^.;]{0,140}?"
+    r"\b(SEMIT|SMART(?!\s+(?:PATAMARES|TECNOLOGIA|SOLU))|COGEL|Inova[çc][ãa]o\s+e\s+Tecnologia|"
+    r"Cidade\s+Inteligente|Governan[çc]a\s+Eletr[ôo]nica)", re.I)
+RE_DONO_PROPRIO = re.compile(r"\b(SEMIT|SMART|COGEL)\b|Inova[çc][ãa]o e Tecnologia|Cidade Inteligente", re.I)
+
+
+def compras_por_ata(linhas, todos, atos):
+    """Garante que todo ato de OUTRO órgão que use uma ata de registro de preços da SEMIT ou da
+    SMART entre na mensagem (tópico 'acompanhados'), mesmo sem palavra de TI."""
+    ids = {id(a) for a in atos}
+    paginas = {}
+    for p, l in linhas:
+        paginas.setdefault(p, []).append(l)
+    for p, ls in paginas.items():
+        texto = re.sub(r"\s+", " ", " ".join(ls))
+        for m in RE_USO_ATA.finditer(texto):
+            trecho = m.group(0)
+            dono = "SEMIT" if re.search(r"SEMIT|Inova", m.group(1), re.I) else "SMART"
+            num = re.search(r"n[º°o.]*\s*([\d][\d./-]{2,})", trecho, re.I)
+            rotulo = f"Compra pela Ata de Registro de Preços {dono}" + (f" nº {num.group(1).rstrip('.')}" if num else "")
+            chave = trecho[:60]
+            ato = next((a for a in todos if a["pagina"] == p and chave in a["titulo"] + " " + a["texto"]), None) \
+                or next((a for a in todos if chave in a["titulo"] + " " + a["texto"]), None)
+            if ato is None and trecho[:24].isupper():
+                continue                     # título em maiúsculas: publicação da própria SEMIT/SMART
+            if ato and RE_DONO_PROPRIO.search(ato["orgao"]):
+                continue                     # publicação da própria SEMIT/SMART: já é tratada
+            if ato is None:
+                # O texto não caiu em nenhum ato: cria um com o trecho ao redor da menção
+                ini = max(0, m.start() - 500)
+                ato = {"topico": "acompanhados", "titulo": "Compra por ata de registro de preços",
+                       "orgao": "", "sigla": "Órgão a confirmar", "pagina": p,
+                       "texto": texto[ini:m.end() + 600]}
+                todos.append(ato)
+            ato["topico"] = "acompanhados"
+            ato["acompanhado"] = rotulo
+            ato["termo"] = f"acompanhado: {rotulo}"
+            if id(ato) not in ids:
+                atos.append(ato)
+                ids.add(id(ato))
+    return atos
 
 
 def eh_da_equipe(ato):
@@ -583,6 +679,7 @@ def resumir_ato(a):
         linha += f"\n   🔎 _motivo: {a.get('termo', '')}_"
     det = []
     if objeto: det.append(f"Objeto: {objeto}")
+    if a.get("acompanhado"): det.append(f"Acompanhamento: {a['acompanhado']}")
     if empresa: det.append(f"Empresa: {empresa}")
     if valor: det.append(f"Valor: {valor}")
     if prazo: det.append(f"Prazo: {prazo}")
@@ -671,17 +768,24 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "publicados por outro órgão (o campo ACOMPANHADO diz qual). Se a imagem confirmar a relação, "
         "coloque-os no tópico 🔎 *Processos acompanhados pela equipe*, logo após o 👤, e termine o item "
         "com a linha 'Acompanhamento: <rótulo>'. Se a relação for só coincidência de palavra, descarte.\n"
+        "- Itens cujo ACOMPANHADO começa com 'Compra pela Ata de Registro de Preços' são compras de "
+        "OUTROS órgãos feitas por uma ata da SEMIT ou da SMART. Esses itens NUNCA são descartados, "
+        "seja qual for o objeto. Vão no tópico 🔎, com: órgão comprador (sigla), o que foi comprado e a "
+        "quantidade, empresa, valor, e a ata e o pregão de origem (ex.: 'Ata SEMIT nº 202600009, "
+        "Pregão SEMIT nº 001/2026'). Se o órgão vier como 'Órgão a confirmar', identifique-o na imagem.\n"
         "- Portarias conjuntas SEMIT/SMART (ou outras) que designam servidores da SMART como gestores ou "
         "fiscais de contratos são da SMART: um item por portaria, dizendo o contrato, a empresa e quem foi "
         "designado gestor e fiscal (nome e papel). Nesses atos de designação, os nomes dos servidores "
         "DEVEM aparecer, ao contrário da regra geral.\n"
-        "- Menções a atas ou pregões da SMART em atos de outros órgãos (ex.: adesão ou AFM com base em "
-        "'Ata SMART nº ...') são da SMART: inclua no tópico 🏢 dizendo qual órgão usou a ata.\n"
+        "- Se vir nas imagens outro órgão comprando por ata ou pregão da SEMIT ou da SMART (adesão, AFM, "
+        "'utilizando a Ata ...'), inclua no tópico 🔎 como acima, mesmo que não esteja na lista.\n"
         "- EXCEÇÃO: TODO ato da SMART (Companhia Salvador Cidade Inteligente) entra, de qualquer "
         "tipo e assunto (portarias, nomeações, dispensas, compras comuns, contratos etc.). Os atos "
         "marcados com TIPO: equipe PROVAVELMENTE são da SMART, mas confirme pelo texto: se o ato for "
         "claramente de outro órgão (ex.: patrocínio da SPMJ), trate-o pelas regras normais. Os atos "
         "confirmados da SMART vão no primeiro tópico: 🏢 *SMART – todos os atos*.\n"
+        "- Todo item começa com • *SIGLA* – . Nas menções, use a sigla de quem publicou com /SMART "
+        "(ex.: • *CDEMS/SMART* – Menção em ...) ou apenas *SMART*.\n"
         "- Itens com TÍTULO 'Menção em ...' são linhas de tabelas ou relatórios que citam a SMART "
         "(ex.: restos a pagar por órgão, decretos de crédito suplementar). Inclua-os também no tópico "
         "da SMART, explicando em até 2 linhas o que os valores representam, usando o título da tabela "
@@ -890,8 +994,13 @@ def garantir_secao_pessoal(corpo):
 
 def gerar_mensagem(url_pdf, conteudo_pdf):
     edicao, data = dados_da_edicao(url_pdf)
-    todos = separar_atos(ler_pdf(conteudo_pdf))
+    linhas = ler_pdf(conteudo_pdf)
+    todos = separar_atos(linhas)
     atos = [a for a in todos if eh_relevante(a)]
+    try:
+        atos = compras_por_ata(linhas, todos, atos)
+    except Exception as e:
+        print(f"AVISO: não foi possível procurar compras pelas atas da SEMIT/SMART ({e}).")
     try:
         atos += pessoal_semit(conteudo_pdf)
     except Exception as e:
