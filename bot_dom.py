@@ -336,7 +336,19 @@ def mencoes_equipe(conteudo, atos_equipe):
             g = grupos.setdefault(chave, {"topico": "equipe", "tipo": "mencao", "orgao": "SMART", "sigla": "SMART",
                                           "pagina": n + 1, "titulo": f"Menção em {titulo}",
                                           "linhas_mencao": [], "cabecalhos": cab})
-            g["linhas_mencao"].append(" | ".join(linhas[max(0, i - 1):i + 2]) if len(l) < 25 else l)
+            if re.match(r"\d{6}\s*-\s*SMART\b", l):
+                # Bloco da unidade orçamentária: as linhas seguintes (sem o código) também são da SMART,
+                # até o SUB-TOTAL ou o código da próxima unidade
+                bloco = [l]
+                for prox in linhas[i + 1:i + 12]:
+                    if re.match(r"\d{6}\s*-\s*[A-Z]{2,}|TOTAL\s+GERAL", prox):
+                        break
+                    bloco.append(prox)
+                    if prox.startswith("SUB-TOTAL"):
+                        break
+                g["linhas_mencao"].append(" / ".join(bloco))
+            else:
+                g["linhas_mencao"].append(" | ".join(linhas[max(0, i - 1):i + 2]) if len(l) < 25 else l)
     atos = []
     for g in grupos.values():
         g["texto"] = ("TABELA/RELATÓRIO: " + g["titulo"][10:] + ". CABEÇALHOS: " + " / ".join(g["cabecalhos"])
@@ -534,7 +546,8 @@ def dividir_afms(atos):
 # ------------- COMPRAS DE OUTROS ÓRGÃOS PELAS ATAS DA SEMIT / SMART -------------
 # Ex.: "aquisição de 16 microcomputadores, utilizando a Ata de Registro de Preços nº 202600009 SEMIT"
 RE_USO_ATA = re.compile(
-    r"(?:Ata\s+de\s+Registro\s+de\s+Pre[çc]os?|\bARP\b)[^.;]{0,140}?"
+    r"(?:Ata\s+de\s+Registro\s+de\s+Pre[çc]os?|\bARP\b|Termo\s+de\s+Compromisso|"
+    r"Preg[ãa]o\s+(?:Eletr[ôo]nico\s+)?(?=[-–\s]*(?:SEMIT|SMART)\b))[^.;]{0,140}?"
     r"\b(SEMIT|SMART(?!\s+(?:PATAMARES|TECNOLOGIA|SOLU))|COGEL|Inova[çc][ãa]o\s+e\s+Tecnologia|"
     r"Cidade\s+Inteligente|Governan[çc]a\s+Eletr[ôo]nica)", re.I)
 RE_DONO_PROPRIO = re.compile(r"\b(SEMIT|SMART|COGEL)\b|Inova[çc][ãa]o e Tecnologia|Cidade Inteligente", re.I)
@@ -552,8 +565,15 @@ def compras_por_ata(linhas, todos, atos):
         for m in RE_USO_ATA.finditer(texto):
             trecho = m.group(0)
             dono = "SEMIT" if re.search(r"SEMIT|Inova", m.group(1), re.I) else "SMART"
-            num = re.search(r"n[º°o.]*\s*([\d][\d./-]{2,})", trecho, re.I)
-            rotulo = f"Compra pela Ata de Registro de Preços {dono}" + (f" nº {num.group(1).rstrip('.')}" if num else "")
+            num = re.search(r"(?:n[º°o.]*|:)\s*([\d][\d./-]{2,})", trecho, re.I)
+            numero = num.group(1).rstrip(".") if num else ""
+            rotulo = f"Compra pela Ata de Registro de Preços {dono}"
+            if re.match(r"Termo", trecho, re.I):
+                rotulo += f" (Termo de Compromisso nº {numero})" if numero else " (Termo de Compromisso)"
+            elif re.match(r"Preg", trecho, re.I):
+                rotulo += f" (Pregão {dono} nº {numero})" if numero else ""
+            elif numero:
+                rotulo += f" nº {numero}"
             chave = trecho[:60]
             ato = next((a for a in todos if a["pagina"] == p and chave in a["titulo"] + " " + a["texto"]), None) \
                 or next((a for a in todos if chave in a["titulo"] + " " + a["texto"]), None)
@@ -792,6 +812,9 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "e os cabeçalhos (ex.: 'Restos a pagar processados: inscritos R$ X, pagos R$ Y; não processados: "
         "saldo R$ Z'). Se não der para identificar as colunas com segurança, transcreva os valores sem "
         "interpretar.\n"
+        "- Em decretos de crédito suplementar, o bloco da SMART (637002-SMART) pode ter várias linhas: "
+        "use a imagem para separar o que é SUPLEMENTAÇÃO (reforço) e o que é ANULAÇÃO (redução), por "
+        "projeto/atividade e elemento de despesa, e informe o subtotal. Não omita nenhuma linha do bloco.\n"
         "- Itens com TIPO: pessoal são nomeações, exonerações (ou retificações delas) de cargos da SEMIT. "
         "Confirme na imagem que o cargo é mesmo da SEMIT (Secretaria Municipal de Inovação e Tecnologia) e "
         "coloque-os num tópico próprio, logo após o da SMART: 👤 *SEMIT – nomeações e exonerações*. "
@@ -824,6 +847,8 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "e qual é o objeto do contrato original, se constar.\n"
         "  Empresa (com CNPJ se houver) · Valor (total ou mensal, indicando qual) · vigência ou uma única data útil\n"
         "  Processo nº, modalidade e fundamento (ex.: dispensa art. 29, II, Lei 13.303) quando constarem, em uma linha curta.\n"
+        "- Em suspensões, adiamentos, revogações e anulações, diga o motivo e a consequência (ex.: "
+        "'suspenso sine die para ajustes no edital', 'nova data 30/10/2026').\n"
         "- Datas: no máximo UMA por item, a mais útil para quem acompanha (sessão de abertura, "
         "prazo final de propostas ou vigência). Nunca inclua data de assinatura, de publicação, "
         "de homologação, nem etapas intermediárias (envio de propostas, início da disputa). "
