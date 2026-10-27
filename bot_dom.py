@@ -52,19 +52,29 @@ ACOMPANHAR = [
 ]
 RE_ACOMPANHAR = [(rotulo, re.compile(rx, re.I)) for rotulo, rx in ACOMPANHAR]
 
+# Atos que citam o Plano de Contratações de TIC entram sempre, qualquer que seja o objeto
+# (ex.: seguro e treinamento de drone "atendendo ao PCTIC" da SEINFRA)
+RE_PCTIC = re.compile(r"\bPCTIC\b|Plano\s+(Anual\s+)?de\s+Contrata[çc](?:[ãa]o|[õo]es)\s+(e\s+Aquisi[çc](?:[ãa]o|[õo]es)\s+)?de\s+TIC", re.I)
+
+# Processos de atas da SEMIT/SMART já conhecidos: AFMs de outros órgãos com esse nº de processo
+# são compras pela ata, mesmo sem citar "SEMIT" no texto.  Formato: "nº do processo": "rótulo"
+PROCESSOS_ATAS = {
+    "179394/2025": "Compra pela Ata de Registro de Preços SEMIT (certificados digitais, PE SEMIT nº 006/2025)",
+}
+
 # Termos que indicam tecnologia
 TERMOS_TIC = [
     r"tecnologia da informa", r"\bTIC\b", r"software", r"\bSaaS\b", r"licen[çc]as? de (uso de )?(software|programas?)", r"cess[ãa]o de (direito de )?uso de (software|sistema)",
     r"licenciamento de (software|licen[çc]as)", r"nuvem", r"\bcloud\b", r"data ?center",
     r"desenvolvimento de sistemas?", r"sistemas? (de informa|informatizad|web)", r"sistema de gerenciamento",
-    r"link(s)? de (internet|dados|comunica)", r"redes? l[óo]gicas?", r"microfilmagem", r"digitaliza[çc][ãa]o de (documentos|acervo)", r"gest[ãa]o (eletr[ôo]nica de )?documen", r"\bSSD\b", r"mem[óo]rias? RAM", r"webcams?", r"headsets?", r"nobreaks?", r"cabos? (de )?rede", r"materia(l|is) de rede", r"roteador", r"access point", r"pen ?drives?", r"\bHD externo", r"smartphones?", r"\bVoIP\b", r"\bSMP\b", r"\bSTFC\b", r"\bMPLS\b", r"SD-?WAN", r"sat[ée]lite", r"cibern[ée]tic", r"\bendpoints?\b", r"\bPCTIC\b", r"\bSGTIC\b", r"monitores? (de )?(v[íi]deo|led|lcd)", r"projetores?", r"\bscanners?\b", r"microcomputadores?", r"processamentos? (autom[áa]tico )?de dados", r"\bGPS\b", r"rastreadores?", r"plataforma web", r"inclus[ãa]o digital", r"infraestrutura de redes?", r"cabeamento estruturado", r"sistemas? de alerta", r"outsourcing", r"loca[çc][ãa]o de (equipamentos de inform|computadores|impressoras|notebooks)", r"\binternet\b", r"fibra [óo]ptica", r"redes? de dados",
+    r"link(s)? de (internet|dados|comunica)", r"redes? l[óo]gicas?", r"microfilmagem", r"digitaliza[çc][ãa]o de (documentos|acervo)", r"gest[ãa]o (eletr[ôo]nica de )?documen", r"\bSSD\b", r"mem[óo]rias? RAM", r"webcams?", r"headsets?", r"nobreaks?", r"cabos? (de )?rede", r"materia(l|is) de rede", r"roteador", r"access point", r"pen ?drives?", r"\bHD externo", r"smartphones?", r"\bVoIP\b", r"\bSMP\b", r"\bSTFC\b", r"\bMPLS\b", r"SD-?WAN", r"(internet|conectividade|links?|comunica[çc][ãa]o|telefon\w*|dados)\s+(via\s+|por\s+)?sat[ée]lite", r"sat[ée]lites?\s+de\s+baixa\s+[óo]rbita", r"\bLEO\b", r"cibern[ée]tic", r"\bendpoints?\b", r"\bPCTIC\b", r"\bSGTIC\b", r"monitores? (de )?(v[íi]deo|led|lcd)", r"projetores?", r"\bscanners?\b", r"microcomputadores?", r"processamentos? (autom[áa]tico )?de dados", r"\bGPS\b", r"rastreadores?", r"plataforma web", r"inclus[ãa]o digital", r"infraestrutura de redes?", r"cabeamento estruturado", r"sistemas? de alerta", r"outsourcing", r"loca[çc][ãa]o de (equipamentos de inform|computadores|impressoras|notebooks)", r"\binternet\b", r"fibra [óo]ptica", r"redes? de dados",
     r"computador", r"notebook", r"microcomputador", r"servidor(es)? de (rede|dados|aplica)",
     r"ciberseguran", r"seguran[çc]a da informa", r"\bLGPD\b", r"telecomunica", r"telefonia",
     r"outsourcing de impress", r"impressoras?", r"transforma[çc][ãa]o digital", r"intelig[êe]ncia artificial",
     r"\bERP\b", r"digitaliza[çc][ãa]o", r"\bGED\b", r"\bOCR\b", r"banco de dados", r"\bbackup\b",
     r"firewall", r"antiv[íi]rus", r"manuten[çc][ãa]o evolutiva", r"sustenta[çc][ãa]o de sistemas?",
     r"registro eletr[ôo]nico de ponto", r"videomonitoramento", r"aplicativo", r"plataforma digital",
-    r"hospedagem", r"certificados? digita", r"wi-?fi", r"\bMicrosoft\b", r"\bOracle\b", r"\bGoogle\b",
+    r"hospedagem", r"certificados? digita", r"wi-?fi", r"\bMicrosoft\b", r"\bOracle\b", r"\bGoogle\b", r"telef[ôo]nica\s+brasil", r"\bclaro\s+s\.?/?a\b", r"\btim\s+s\.?/?a\b", r"\bembratel\b", r"\boi\s+s\.?/?a\b",
     r"\bAWS\b", r"\bSAP\b", r"\bGartner\b", r"inform[áa]tica", r"tablets?", r"switch(es)?",
 ]
 
@@ -83,6 +93,10 @@ FALSOS_POSITIVOS = [
     # nome de empresa (ex.: "BP MONEY TECNOLOGIA DA INFORMAÇÃO LTDA")
     r"tecnologia da informa[çc][ãa]o\s+(ltda|s\.?/?a\b|eireli|me\b|epp\b)",
     r"inform[áa]tica\s+(ltda|s\.?/?a\b|eireli|me\b|epp\b)",
+    # links, sites e e-mails citados no ato (ex.: "drive.google.com/...") não indicam compra de TI
+    r"https?://\S+", r"\bwww\.\S+", r"\S+@\S+\.\S+",
+    # mídia para retirar o edital (ex.: "fornecer um CD-R virgem ou pendrive")
+    r"(cd-?r?|dvd)\s+virgem\s+ou\s+pen ?drive", r"pen ?drive\s+virgem",
 ]
 
 # Atos descartados mesmo que citem tecnologia
@@ -547,7 +561,7 @@ def dividir_afms(atos):
 # Ex.: "aquisição de 16 microcomputadores, utilizando a Ata de Registro de Preços nº 202600009 SEMIT"
 RE_USO_ATA = re.compile(
     r"(?:Ata\s+de\s+Registro\s+de\s+Pre[çc]os?|\bARP\b|Termo\s+de\s+Compromisso|"
-    r"Preg[ãa]o\s+(?:Eletr[ôo]nico\s+)?(?=[-–\s]*(?:SEMIT|SMART)\b))[^.;]{0,140}?"
+    r"Preg[ãa]o\s+(?=[^;]{0,45}?[-–/\s](?:SEMIT|SMART)\b))[^;]{0,140}?"
     r"\b(SEMIT|SMART(?!\s+(?:PATAMARES|TECNOLOGIA|SOLU))|COGEL|Inova[çc][ãa]o\s+e\s+Tecnologia|"
     r"Cidade\s+Inteligente|Governan[çc]a\s+Eletr[ôo]nica)", re.I)
 RE_DONO_PROPRIO = re.compile(r"\b(SEMIT|SMART|COGEL)\b|Inova[çc][ãa]o e Tecnologia|Cidade Inteligente", re.I)
@@ -571,7 +585,7 @@ def compras_por_ata(linhas, todos, atos):
             if re.match(r"Termo", trecho, re.I):
                 rotulo += f" (Termo de Compromisso nº {numero})" if numero else " (Termo de Compromisso)"
             elif re.match(r"Preg", trecho, re.I):
-                rotulo += f" (Pregão {dono} nº {numero})" if numero else ""
+                rotulo = f"Contratação pelo Pregão {dono}" + (f" nº {numero}" if numero else "")
             elif numero:
                 rotulo += f" nº {numero}"
             chave = trecho[:60]
@@ -594,7 +608,29 @@ def compras_por_ata(linhas, todos, atos):
             if id(ato) not in ids:
                 atos.append(ato)
                 ids.add(id(ato))
+    # Mesmo nº de processo de uma compra pela ata (nesta edição ou na lista PROCESSOS_ATAS):
+    # outras AFMs desse processo também são compras pela ata, ainda que não citem a SEMIT/SMART
+    conhecidos = dict(PROCESSOS_ATAS)
+    for a in atos:
+        if a.get("acompanhado", "").startswith(ROTULOS_ATA):
+            for proc in RE_PROCESSO_NUM.findall(a["titulo"] + " " + a["texto"]):
+                conhecidos.setdefault(proc, a["acompanhado"])
+    for a in todos:
+        if a.get("acompanhado", "").startswith(ROTULOS_ATA) or RE_DONO_PROPRIO.search(a["orgao"]):
+            continue
+        proc = next((pr for pr in RE_PROCESSO_NUM.findall(a["titulo"] + " " + a["texto"]) if pr in conhecidos), None)
+        if proc:
+            a["topico"] = "acompanhados"
+            a["acompanhado"] = conhecidos[proc]
+            a["termo"] = f"acompanhado: {conhecidos[proc]} (processo {proc})"
+            if id(a) not in ids:
+                atos.append(a)
+                ids.add(id(a))
     return atos
+
+
+ROTULOS_ATA = ("Compra pela Ata", "Contratação pelo Pregão")
+RE_PROCESSO_NUM = re.compile(r"Processo[^\d]{0,25}?(\d{1,3}(?:\.?\d{3})?/\d{4})", re.I)
 
 
 def eh_da_equipe(ato):
@@ -619,6 +655,9 @@ def eh_relevante(ato):
         ato["topico"] = "equipe"
         if ORGAO_EQUIPE not in ato["sigla"] and not RE_EQUIPE.search(ato["orgao"]):
             ato["sigla"] = f"{ato['sigla']}/{ORGAO_EQUIPE}"     # ex.: portaria conjunta SEMIT/SMART
+        return True
+    if RE_PCTIC.search(completo) and ato["topico"] != "outros":
+        ato["termo"] = "Plano de Contratações de TIC (PCTIC)"
         return True
     rotulo = acompanhado(ato)
     if rotulo:
@@ -788,8 +827,8 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "publicados por outro órgão (o campo ACOMPANHADO diz qual). Se a imagem confirmar a relação, "
         "coloque-os no tópico 🔎 *Processos acompanhados pela equipe*, logo após o 👤, e termine o item "
         "com a linha 'Acompanhamento: <rótulo>'. Se a relação for só coincidência de palavra, descarte.\n"
-        "- Itens cujo ACOMPANHADO começa com 'Compra pela Ata de Registro de Preços' são compras de "
-        "OUTROS órgãos feitas por uma ata da SEMIT ou da SMART. Esses itens NUNCA são descartados, "
+        "- Itens cujo ACOMPANHADO começa com 'Compra pela Ata de Registro de Preços' ou 'Contratação pelo "
+        "Pregão' são compras/contratos de OUTROS órgãos feitos por uma ata ou pregão da SEMIT ou da SMART. Esses itens NUNCA são descartados, "
         "seja qual for o objeto. Vão no tópico 🔎, com: órgão comprador (sigla), o que foi comprado e a "
         "quantidade, empresa, valor, e a ata e o pregão de origem (ex.: 'Ata SEMIT nº 202600009, "
         "Pregão SEMIT nº 001/2026'). Se o órgão vier como 'Órgão a confirmar', identifique-o na imagem.\n"
@@ -822,6 +861,9 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "'• *Exoneração* – NOME, cargo, a pedido se constar _(pág. N)_'. Não inclua nomeações e "
         "exonerações de outros órgãos. Este tópico aparece SEMPRE; se não houver nenhuma, escreva "
         "apenas: _Nenhuma nomeação ou exoneração nesta edição._\n"
+        "- Atos que citam o PCTIC (Plano de Contratação e Aquisição de TIC) entram SEMPRE, mesmo que o "
+        "objeto não pareça de TI (ex.: seguro ou treinamento de drone previstos no PCTIC). Diga no item "
+        "que a contratação está prevista no PCTIC do órgão.\n"
         "- Atos NORMATIVOS sobre TIC também entram, mesmo sem 'objeto' de contratação: decretos, "
         "portarias e instruções normativas que tratem de política ou governança de TIC, telefonia "
         "corporativa, segurança da informação, LGPD, sistemas corporativos, comitês de TIC, ou que "
@@ -849,6 +891,8 @@ def montar_com_ia(atos, conteudo_pdf=None):
         "  Processo nº, modalidade e fundamento (ex.: dispensa art. 29, II, Lei 13.303) quando constarem, em uma linha curta.\n"
         "- Em suspensões, adiamentos, revogações e anulações, diga o motivo e a consequência (ex.: "
         "'suspenso sine die para ajustes no edital', 'nova data 30/10/2026').\n"
+        "- Se o valor vier dividido (ex.: por elemento de despesa), mostre as parcelas; se somar, "
+        "deixe claro que é a soma (ex.: 'R$ 64.000,00 + R$ 2.600,00 = R$ 66.600,00').\n"
         "- Datas: no máximo UMA por item, a mais útil para quem acompanha (sessão de abertura, "
         "prazo final de propostas ou vigência). Nunca inclua data de assinatura, de publicação, "
         "de homologação, nem etapas intermediárias (envio de propostas, início da disputa). "
@@ -993,6 +1037,22 @@ TEXTO_PESSOAL_VAZIO = "_Nenhuma nomeação ou exoneração nesta edição._"
 EMOJIS_SECAO = ("🏢", "👤", "🔎", "📢", "📝", "✅", "📌")
 
 
+def remover_secoes_vazias(corpo):
+    """Tira títulos de seção sem nenhum item (ex.: '🏢 SMART – todos os atos' sozinho)."""
+    linhas = corpo.split("\n")
+    saida, i = [], 0
+    while i < len(linhas):
+        l = linhas[i]
+        if l.lstrip().startswith(EMOJIS_SECAO) and not l.lstrip().startswith("👤"):
+            fim = next((j for j in range(i + 1, len(linhas)) if linhas[j].lstrip().startswith(EMOJIS_SECAO)), len(linhas))
+            if not any(x.strip() for x in linhas[i + 1:fim]):
+                i = fim                                  # seção vazia: pula título e linhas em branco
+                continue
+        saida.append(l)
+        i += 1
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(saida)).strip()
+
+
 def garantir_secao_pessoal(corpo):
     """A seção de nomeações/exonerações da SEMIT aparece SEMPRE, logo após a da SMART."""
     linhas = corpo.split("\n")
@@ -1052,6 +1112,7 @@ def gerar_mensagem(url_pdf, conteudo_pdf):
             corpo = montar_por_regras(atos) + "\n\n_⚠️ Resumo sem IA: a IA não respondeu nesta edição._"
     else:
         corpo = montar_por_regras(atos)
+    corpo = remover_secoes_vazias(corpo)
     corpo = garantir_secao_pessoal(corpo)
     # Uma linha em branco antes de cada item (a IA às vezes esquece)
     corpo = re.sub(r"(?m)^([^\n]*\S[^\n]*)\n(?=[ \t]*•)", r"\1\n\n", corpo)
