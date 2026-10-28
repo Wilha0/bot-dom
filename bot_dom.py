@@ -1014,22 +1014,73 @@ def dividir_mensagem(texto, limite, medir):
     return partes
 
 
+ERROS_PASSAGEIROS = (429, 500, 502, 503, 504)
+
+
+def postar(webhook, texto, tentativas=3):
+    """Envia um texto ao webhook. Em erro passageiro do Google (429/5xx), espera e tenta de novo."""
+    espera = [10, 30]
+    for n in range(tentativas):
+        try:
+            r = requests.post(webhook, json={"text": texto}, timeout=30)
+        except requests.RequestException as e:
+            r, erro = None, e
+        else:
+            erro = None
+            if r.status_code < 400:
+                return r
+            if r.status_code not in ERROS_PASSAGEIROS:
+                return r                          # erro definitivo (ex.: 400): não adianta repetir
+        if n < tentativas - 1:
+            motivo = f"HTTP {r.status_code}" if r is not None else f"falha de conexão ({erro})"
+            print(f"AVISO: o Google Chat respondeu {motivo}. Nova tentativa em {espera[n]} s.")
+            time.sleep(espera[n])
+    if r is None:
+        raise erro
+    return r
+
+
+def texto_simples(t):
+    """Versão 'limpa' do texto, para o caso de o Chat recusar algum caractere."""
+    import unicodedata
+    t = unicodedata.normalize("NFC", t)
+    t = re.sub(r"[<>]", "", t)                                 # o Chat usa < > para links e menções
+    return "".join(c for c in t if c in "\n\t" or unicodedata.category(c)[0] != "C")
+
+
 def enviar_chat(texto):
-    """Envia ao Google Chat. O limite do Chat é 32.000 bytes por mensagem, então quase
-    sempre vai numa mensagem só; acima disso, divide sem cortar itens ao meio."""
+    """Envia ao Google Chat (limite de 32.000 bytes por mensagem), com plano B se o Chat falhar:
+    1) mensagem inteira, com novas tentativas; 2) partes menores; 3) partes em texto limpo;
+    4) aviso curto com o link do DOM. Se nem o aviso curto passar, a execução falha e a próxima
+    verificação tenta de novo."""
     webhook = os.environ["GCHAT_WEBHOOK_URL"]
     partes = dividir_mensagem(texto, 30000, lambda t: len(t.encode("utf-8")))
-    r = requests.post(webhook, json={"text": partes[0]}, timeout=30)
-    if r.status_code == 400 and len(partes[0]) > 3900:
-        # Se o Chat recusar a mensagem longa, volta ao envio em partes menores
-        print("AVISO: o Google Chat recusou a mensagem longa. Enviando em partes menores.")
-        partes = dividir_mensagem(texto, 3900, len)
-        r = requests.post(webhook, json={"text": partes[0]}, timeout=30)
-    r.raise_for_status()
-    for p in partes[1:]:
-        requests.post(webhook, json={"text": p}, timeout=30).raise_for_status()
-    if len(partes) > 1:
-        print(f"Mensagem enviada em {len(partes)} partes.")
+    r = postar(webhook, partes[0])
+    if r.status_code < 400:
+        for p in partes[1:]:
+            postar(webhook, p).raise_for_status()
+        if len(partes) > 1:
+            print(f"Mensagem enviada em {len(partes)} partes.")
+        return
+    print(f"AVISO: o Google Chat recusou a mensagem ({r.status_code}: {r.text[:200]}). Tentando em partes menores.")
+    enviadas = 0
+    for p in dividir_mensagem(texto, 3900, len):
+        r = postar(webhook, p, tentativas=2)
+        if r.status_code >= 400:
+            r = postar(webhook, texto_simples(p), tentativas=2)
+        if r.status_code >= 400:
+            break
+        enviadas += 1
+    else:
+        print(f"Mensagem enviada em {enviadas} partes menores.")
+        return
+    # Último recurso: aviso curto com o cabeçalho e o link, para a equipe não ficar sem o DOM
+    cabecalho = "\n".join(texto.split("\n")[:2])
+    aviso = (cabecalho + "\n\n⚠️ O Google Chat não aceitou o resumo completo desta edição "
+             f"(erro {r.status_code}). Ele ficou registrado no log do GitHub e pode ser reenviado depois.")
+    r2 = postar(webhook, aviso)
+    r2.raise_for_status()
+    print("AVISO: enviado só o aviso curto com o link; o resumo completo está acima neste log.")
 
 
 TITULO_PESSOAL = f"👤 *{ORGAO_PESSOAL} – nomeações e exonerações*"
@@ -1147,10 +1198,12 @@ def executar():
         print("=== MODO TESTE: mensagem NÃO enviada ao Google Chat ===\n")
         print(mensagem)
         return
+    # Mostra a mensagem no log ANTES de enviar: se o Chat falhar, o texto não se perde
+    print("=== Mensagem a enviar ===\n" + mensagem + "\n=========================")
     enviar_chat(mensagem)
     with open(STATE_FILE, "w") as f:
         f.write(url_pdf)
-    print("Enviado.\n\n" + mensagem)
+    print("Enviado.")
 
 
 if __name__ == "__main__":
