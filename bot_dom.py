@@ -2,7 +2,9 @@
 Bot DOM Salvador -> Google Chat  (versão 2)
 
 O que faz:
-  1. Encontra a edição mais recente do DOM de Salvador.
+  1. Encontra a edição mais recente do DOM de Salvador (site novo, desde nov/2026:
+     https://dom.salvador.ba.gov.br/diario). Se houver edições não enviadas
+     (até 3), envia todas, da mais antiga para a mais nova.
   2. Lê o PDF respeitando as colunas da página.
   3. Separa o texto em atos (extratos, avisos, aditivos, atas...).
   4. Mantém só os atos de tecnologia (de qualquer órgão) e os atos
@@ -20,13 +22,14 @@ Variáveis de ambiente:
   TESTE               (opcional) "sim" gera a mensagem só no log, sem enviar ao Google Chat
   DIAGNOSTICO         (opcional) "sim" mostra o motivo de cada item e lista todos os atos no log
 """
-import os, re, io, time
-from urllib.parse import urljoin
+import os, re, io, time, json, html as html_lib
 import requests
 from bs4 import BeautifulSoup
 import pdfplumber
 
-DOM_HOME = "http://www.dom.salvador.ba.gov.br/"
+DOM_SITE = "https://dom.salvador.ba.gov.br"
+DOM_HOME = DOM_SITE + "/diario"          # site novo (nov/2026): página Inertia com os dados em JSON
+MAX_ATRASADAS = 3                        # edições não enviadas que o bot recupera de uma vez
 STATE_FILE = "ultima_edicao.txt"
 HEADERS = {"User-Agent": "Mozilla/5.0 (bot-dom-smart)"}
 
@@ -175,21 +178,84 @@ def baixar(url, timeout=60):
     raise SiteIndisponivel(f"{url}: {ultimo_erro}")
 
 
-def achar_pdf_do_dia():
-    """Procura na página inicial do DOM o link do PDF da edição mais recente."""
-    html = baixar(DOM_HOME).text
-    soup = BeautifulSoup(html, "html.parser")
-    links = [urljoin(DOM_HOME, a["href"]) for a in soup.find_all("a", href=True)
-             if ".pdf" in a["href"].lower()]
-    # Prefere links no padrão dom-NNNN-DD-MM-AAAA.pdf, pelo maior número de edição
-    padrao = [l for l in links if re.search(r"dom-\d+-\d{2}-\d{2}-\d{4}", l, re.I)]
-    if padrao:
-        return max(padrao, key=lambda l: int(re.search(r"dom-(\d+)", l, re.I).group(1)))
-    return links[0] if links else None
+class SiteMudou(Exception):
+    """A página do DOM não tem mais os dados no formato esperado."""
 
 
-def dados_da_edicao(url_pdf):
-    m = re.search(r"dom-(\d+)-(\d{2})-(\d{2})-(\d{4})", url_pdf, re.I)
+def dados_da_pagina(url=DOM_HOME):
+    """O site novo do DOM (PUBLIQ-DOM) guarda os dados da página num JSON, no atributo
+    data-page do <div id="app">. Devolve o dicionário 'props' desse JSON."""
+    html = baixar(url).text
+    m = re.search(r'<div[^>]*\bid="app"[^>]*\bdata-page="([^"]*)"', html) or \
+        re.search(r'<div[^>]*\bdata-page="([^"]*)"[^>]*\bid="app"', html)
+    if not m:
+        raise SiteMudou("não encontrei o bloco data-page na página do DOM")
+    return json.loads(html_lib.unescape(m.group(1))).get("props", {})
+
+
+def url_pdf_da_edicao(item):
+    if item.get("pdf_url"):
+        return item["pdf_url"]
+    codigo = item.get("documento_legado_codigo") or item.get("codigo_publico")
+    if codigo:
+        return f"{DOM_SITE}/diario/arquivo/{codigo}/pdf"
+    if item.get("id") and item.get("origem") not in ("legado", "atos"):
+        return f"{DOM_SITE}/diario/edicao/{item['id']}/pdf"
+    return None
+
+
+def edicoes_recentes():
+    """Edições recentes do DOM, da mais antiga para a mais nova:
+    [{'numero': 9387, 'seq': 1, 'tipo': 'ordinaria', 'data': '2026-11-10', 'pdf': url}, ...]"""
+    props = dados_da_pagina()
+    itens = []
+    for e in props.get("recentEditions") or []:
+        itens.append(e)
+        for sup in e.get("edicoes_suplementares") or []:
+            if isinstance(sup, dict):
+                itens.append({"data_publicacao": e.get("data_publicacao"), **sup})
+    itens += props.get("acervo_legado") or []
+    edicoes = {}
+    for it in itens:
+        numero = it.get("numero_edicao")
+        pdf = url_pdf_da_edicao(it)
+        if not numero or not pdf:
+            continue                       # ex.: bloco "leis e decretos" sem PDF próprio
+        chave = (int(numero), int(it.get("sequencia_edicao") or 1))
+        edicoes[chave] = {"numero": chave[0], "seq": chave[1], "tipo": it.get("tipo_edicao") or "ordinaria",
+                          "data": it.get("data_publicacao") or it.get("data_edicao") or "", "pdf": pdf}
+    if not edicoes:
+        raise SiteMudou("a página do DOM não listou nenhuma edição com PDF")
+    return [edicoes[k] for k in sorted(edicoes)]
+
+
+def ler_estado():
+    """Última edição enviada, como (número, sequência). Aceita o formato antigo (URL do PDF)."""
+    if not os.path.exists(STATE_FILE):
+        return None
+    t = open(STATE_FILE).read().strip()
+    m = re.match(r"(\d+)-(\d+)\|", t) or re.search(r"dom-(\d+)-\d{2}-\d{2}-\d{4}", t, re.I)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)) if m.lastindex and m.lastindex >= 2 else 1)
+
+
+def gravar_estado(ed):
+    with open(STATE_FILE, "w") as f:
+        f.write(f"{ed['numero']}-{ed['seq']}|{ed['pdf']}")
+
+
+def dados_da_edicao(ed):
+    """('Edição nº 9.387', '10/11/2026') a partir dos dados da edição (ou de uma URL antiga)."""
+    if isinstance(ed, dict):
+        rotulo = f"Edição nº {ed['numero']:,}".replace(",", ".")
+        if ed.get("tipo") and ed["tipo"] != "ordinaria":
+            rotulo += f" ({ed['tipo']})"
+        elif ed.get("seq", 1) > 1:
+            rotulo += f" – {ed['seq']}ª parte"
+        a, m_, d = (ed.get("data") or "--").split("-") if ed.get("data") else ("", "", "")
+        return rotulo, f"{d}/{m_}/{a}" if a else ""
+    m = re.search(r"dom-(\d+)-(\d{2})-(\d{2})-(\d{4})", ed or "", re.I)
     if m:
         return f"Edição nº {int(m.group(1)):,}".replace(",", "."), f"{m.group(2)}/{m.group(3)}/{m.group(4)}"
     return "Edição", ""
@@ -1128,8 +1194,8 @@ def garantir_secao_pessoal(corpo):
     return re.sub(r"\n{3,}", "\n\n", "\n".join(novo)).strip()
 
 
-def gerar_mensagem(url_pdf, conteudo_pdf):
-    edicao, data = dados_da_edicao(url_pdf)
+def gerar_mensagem(url_pdf, conteudo_pdf, ed=None):
+    edicao, data = dados_da_edicao(ed or url_pdf)
     linhas = ler_pdf(conteudo_pdf)
     todos = separar_atos(linhas)
     atos = [a for a in todos if eh_relevante(a)]
@@ -1179,31 +1245,45 @@ def main():
     except SiteIndisponivel as e:
         # Instabilidade do site do DOM: encerra sem erro; a próxima verificação tenta de novo
         print(f"Site do DOM indisponível no momento. Nova tentativa na próxima verificação.\n{e}")
+    except SiteMudou as e:
+        print(f"ERRO: o site do DOM mudou de formato e o bot não conseguiu achar a edição ({e}).")
+        raise
 
 
 def executar():
-    url_pdf = achar_pdf_do_dia()
-    if not url_pdf:
-        print("PDF não encontrado.")
-        return
-    ultima = open(STATE_FILE).read().strip() if os.path.exists(STATE_FILE) else ""
+    edicoes = edicoes_recentes()
+    ultima = ler_estado()
     teste = os.environ.get("TESTE") == "sim"
-    if url_pdf == ultima and os.environ.get("FORCAR_ENVIO") != "sim" and not teste:
+    forcar = os.environ.get("FORCAR_ENVIO") == "sim"
+    mais_nova = edicoes[-1]
+    print(f"Edição mais recente no site: nº {mais_nova['numero']} ({mais_nova['data']}). "
+          f"Última enviada: {ultima[0] if ultima else 'nenhuma registrada'}.")
+    if teste or forcar or ultima is None:
+        pendentes = [mais_nova]
+    else:
+        pendentes = [e for e in edicoes if (e["numero"], e["seq"]) > ultima]
+        if len(pendentes) > MAX_ATRASADAS:
+            print(f"AVISO: {len(pendentes)} edições não enviadas; enviando só as {MAX_ATRASADAS} mais recentes.")
+            pendentes = pendentes[-MAX_ATRASADAS:]
+    if not pendentes:
         print("Edição já enviada.")
         return
-    conteudo = baixar(url_pdf, timeout=180).content
-    mensagem = gerar_mensagem(url_pdf, conteudo)
-    if teste:
-        # Modo teste: mostra a mensagem no log e não envia nem registra a edição
-        print("=== MODO TESTE: mensagem NÃO enviada ao Google Chat ===\n")
-        print(mensagem)
-        return
-    # Mostra a mensagem no log ANTES de enviar: se o Chat falhar, o texto não se perde
-    print("=== Mensagem a enviar ===\n" + mensagem + "\n=========================")
-    enviar_chat(mensagem)
-    with open(STATE_FILE, "w") as f:
-        f.write(url_pdf)
-    print("Enviado.")
+    for ed in pendentes:
+        print(f"\n>>> Processando edição nº {ed['numero']} ({ed['data']}): {ed['pdf']}")
+        conteudo = baixar(ed["pdf"], timeout=180).content
+        if not conteudo.startswith(b"%PDF"):
+            raise SiteMudou(f"o link da edição {ed['numero']} não devolveu um PDF")
+        mensagem = gerar_mensagem(ed["pdf"], conteudo, ed)
+        if teste:
+            # Modo teste: mostra a mensagem no log e não envia nem registra a edição
+            print("=== MODO TESTE: mensagem NÃO enviada ao Google Chat ===\n")
+            print(mensagem)
+            continue
+        # Mostra a mensagem no log ANTES de enviar: se o Chat falhar, o texto não se perde
+        print("=== Mensagem a enviar ===\n" + mensagem + "\n=========================")
+        enviar_chat(mensagem)
+        gravar_estado(ed)
+        print("Enviado.")
 
 
 if __name__ == "__main__":
