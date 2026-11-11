@@ -3,7 +3,9 @@ Bot DOM Salvador -> Google Chat  (versão 2)
 
 O que faz:
   1. Encontra a edição mais recente do DOM de Salvador (site novo, desde nov/2026:
-     https://dom.salvador.ba.gov.br/diario). Se houver edições não enviadas
+     https://dom.salvador.ba.gov.br/diario). Edições antigas vêm do acervo
+     (/diario/arquivo/<código>/pdf) e as novas do PDF do dia
+     (/diario/dia/pdf?data=AAAA-MM-DD). Se houver edições não enviadas
      (até 3), envia todas, da mais antiga para a mais nova.
   2. Lê o PDF respeitando as colunas da página.
   3. Separa o texto em atos (extratos, avisos, aditivos, atas...).
@@ -23,6 +25,8 @@ Variáveis de ambiente:
   DIAGNOSTICO         (opcional) "sim" mostra o motivo de cada item e lista todos os atos no log
 """
 import os, re, io, time, json, html as html_lib
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 import pdfplumber
@@ -79,6 +83,11 @@ TERMOS_TIC = [
     r"registro eletr[ôo]nico de ponto", r"videomonitoramento", r"aplicativo", r"plataforma digital",
     r"hospedagem", r"certificados? digita", r"wi-?fi", r"\bMicrosoft\b", r"\bOracle\b", r"\bGoogle\b", r"telef[ôo]nica\s+brasil", r"\bclaro\s+s\.?/?a\b", r"\btim\s+s\.?/?a\b", r"\bembratel\b", r"\boi\s+s\.?/?a\b",
     r"\bAWS\b", r"\bSAP\b", r"\bGartner\b", r"inform[áa]tica", r"tablets?", r"switch(es)?",
+    # licença de uso de ferramenta/sistema (ex.: "licenças de uso do Trello Premium, em ambiente web")
+    r"licen[çc]as? de uso\b(?!\s+(de|do|da|dos|das)\s+(imagem|imagens|voz|marca|obra|espa[çc]o|[áa]rea|equipamento|bens?|im[óo]vel|terreno|logradouro))",
+    r"(ambiente|aplica[çc][ãa]o|sistema|portal|plataforma|solu[çc][ãa]o|vers[ãa]o)\s+web\b",
+    r"\bTrello\b", r"\bJira\b", r"\bAuto ?CAD\b", r"\bAutodesk\b", r"\bCanva\b", r"Office\s*365", r"Microsoft\s*365",
+    r"Google\s+Workspace", r"\bChatGPT\b", r"\bOpenAI\b", r"Adobe\s+(Acrobat|Creative|Photoshop|Illustrator|Premiere)",
 ]
 
 # Expressões que parecem tecnologia mas não são (removidas antes da busca)
@@ -104,7 +113,7 @@ FALSOS_POSITIVOS = [
 
 # Atos descartados mesmo que citem tecnologia
 DESCARTAR = [
-    r"suplementa[çc][ãa]o", r"cr[ée]dito suplementar", r"\bnomear\b", r"\bexonerar\b",
+    r"suplementa[çc][ãa]o", r"cr[ée]dito (adicional )?suplementar", r"\bnomear\b", r"\bexonerar\b",
     r"\bf[ée]rias\b", r"\baposentadoria\b", r"licen[çc]a[- ]pr[êe]mio",
 ]
 
@@ -119,7 +128,8 @@ TOPICOS = [
     ("contrato", "📝 *Contratos, aditivos e apostilamentos*",
      r"(EXTRATO|RESUMO)\s+(D[OAE]S?\s+)?(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?(CONTRATO|TERMO|ADITIVO|APOSTILA|CONV[ÊE]NIO|ACORDO|RESCIS|AUTORIZA[ÇC][ÃA]O\s+DE\s+FORNECIMENTO)|(\d+\s*[ºª°o]?\s+|(PRIMEIR|SEGUND|TERCEIR|QUART|QUINT|SEXT|S[ÉE]TIM|OITAV|NON|D[ÉE]CIM)[OA]\s+)?TERMO\s+(ADITIVO|DE\s+(APOSTILA|PRORROGA|RESCIS|RERRATIFICA))|APOSTILAMENTO|AUTORIZA[ÇC][ÃA]O\s+DE\s+FORNECIMENTO|RESCIS[ÃA]O\s+(UNILATERAL|AMIG|CONTRATUAL|DO\s+CONTRATO)|RETIFICA[ÇC][ÃA]O\s+(DE|DO|DA)?\s*(RESUMO|EXTRATO|TERMO|CONTRATO)"),
     ("resultado", "✅ *Resultados, homologações e atas*",
-     r"(AVISO\s+DE\s+|TERMO\s+DE\s+|EXTRATO\s+D[AE]\s+)?(HOMOLOGA|ADJUDICA|RATIFICA|RESULTADO)|(EXTRATO\s+D[AE]\s+)?ATA\s+DE\s+REGISTRO\s+DE\s+PRE"),
+     r"(AVISO\s+DE\s+|TERMO\s+DE\s+|EXTRATO\s+D[AE]\s+)?(HOMOLOGA|ADJUDICA|RATIFICA|RESULTADO)|(EXTRATO\s+D[AE]\s+)?ATA\s+DE\s+REGISTRO\s+DE\s+PRE"
+     r"|(RESUMO|EXTRATO)\s+D[AEO]\s+(DISPENSA|INEXIGIBILIDADE)"),     # ex.: "RESUMO DA DISPENSA DE LICITAÇÃO Nº 022/2026"
     ("licitacao", "📢 *Licitações, cotações e editais*",
      r"AVISO\s+DE\s+(LICITA|PREG|CONCORR|COTA|DISPENSA|CHAMAMENTO|INTEN|SESS|REABERTURA|ADIAMENTO|SUSPENS|RETIFICA|REVOGA|ANULA|CREDENCIA|CONVOCA)|AVISO\s+DE\s+CONTRATA|EDITAL|CHAMAMENTO\s+P[ÚU]BLICO|INTEN[ÇC][ÃA]O\s+DE\s+REGISTRO|DISPENSA\s+(DE\s+LICITA|ELETR)|INEXIGIBILIDADE"),
     ("outros", "📌 *Outros atos*",
@@ -149,13 +159,47 @@ RE_ORGAO = re.compile(
 RE_ORGAO_MISTO = re.compile(
     r"^(Companhia|Secretaria|Superintend[êe]ncia|Funda[çc][ãa]o|Empresa|Ag[êe]ncia|Controladoria|"
     r"Procuradoria|Casa Civil|Gabinete do Prefeito|Defesa Civil|Guarda Civil|Conselho)\b[^.;:]{5,110}\s[-–]\s[A-Z]{2,12}$")
+# Conselhos e Defesa Civil em maiúsculas só contam como órgão com a sigla no fim
+# (ex.: "CONSELHO MUNICIPAL DE TRIBUTOS - CMT", "DEFESA CIVIL DE SALVADOR - CODESAL")
+RE_ORGAO_SIGLA = re.compile(r"^(CONSELHO|DEFESA CIVIL)\b[A-ZÀ-Ú ,\-–/]*\s[-–]\s[A-Z]{2,12}$")
+# Grandes seções do DOM (ex.: "EXECUTIVO", "LICITAÇÕES"): encerram o órgão anterior
+RE_SECAO_DOM = re.compile(r"^(EXECUTIVO|PODER EXECUTIVO|LEGISLATIVO|LICITA[ÇC][ÕO]ES|CONTRATOS|EDITAIS|DIVERSOS|"
+                          r"DOM DIVERSOS|CONV[ÊE]NIOS)$")
+# Blocos de leis e decretos do Prefeito (sem cabeçalho de órgão)
+RE_GRUPO_DECRETOS = re.compile(r"^(DECRETOS(\s+[A-ZÀ-Ú]+){1,2}|LEIS(\s+[A-ZÀ-Ú]+){0,2})$")
+ORGAO_PREFEITO = "GABINETE DO PREFEITO - PREFEITO"
+RE_TITULO_DECRETO = re.compile(r"^(DECRETO|LEI(\s+COMPLEMENTAR)?)\s+(N[º°o.]*\s*[\d.]+(/\d{4})?,?\s+)?(de|DE)\s+\d")
 RE_CABECALHO = [
     re.compile(r"^DI[ÁA]RIO OFICIAL DO\b.*$"), re.compile(r"^SALVADOR-BAHIA\b.*$"),
     re.compile(r"^(SEGUNDA|TER[ÇC]A|QUARTA|QUINTA|SEXTA|S[ÁA]BADO|DOMINGO)[- A-ZÀ-Ú]*\d{1,2} (A \d{1,2} )?DE [A-ZÇ]+ DE \d{4}.*$"),
     re.compile(r"^ANO [IVXLC]+ ?\| ?N ?º.*$"), re.compile(r"^\d{1,3}$"),
     re.compile(r".*\bDE \d{4} ANO [IVXLC]+ ?\| ?N ?º.*$"),  # pedaços do cabeçalho cortados pela coluna
     re.compile(r"^.{0,40}ANO [IVXLC]+ ?\| ?N ?º ?[\d.]+$"),
+    # cabeçalho quebrado em várias linhas (ex.: "2 SALVADOR-BAHIA" / "QUARTA-FEIRA" / "11 DE NOVEMBRO DE 2026")
+    re.compile(r"^\d{1,3} SALVADOR-BAHIA$"), re.compile(r"^SALVADOR ?[•·-] ?BAHIA$"),
+    re.compile(r"^(SEGUNDA|TER[ÇC]A|QUARTA|QUINTA|SEXTA)-FEIRA,?$"), re.compile(r"^(S[ÁA]BADO|DOMINGO),?$"),
+    re.compile(r"^\d{1,2} (A \d{1,2} )?DE (JANEIRO|FEVEREIRO|MAR[ÇC]O|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|"
+               r"OUTUBRO|NOVEMBRO|DEZEMBRO) DE \d{4}$"),
 ]
+# Hífen de quebra de linha usado pelo PDF novo ("Muni‐" + "cípio"): some ao juntar as linhas
+HIFENS_QUEBRA = ("\u2010", "\u00ad")
+
+
+def juntar_linhas(linhas):
+    """Junta as linhas de um ato num texto corrido, emendando palavras quebradas com hífen."""
+    texto = ""
+    for l in linhas:
+        if texto.endswith(HIFENS_QUEBRA):
+            texto = texto[:-1] + l.lstrip()
+        else:
+            texto += (" " if texto else "") + l
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def texto_corrido_pdfium(texto):
+    """Texto do pdfium com as palavras quebradas no fim da linha emendadas."""
+    texto = texto.replace("\ufffe", "")
+    return re.sub(r"[\u2010\u00ad]\s*\r?\n\s*", "", texto)
 
 
 # ------------------------------- COLETA ------------------------------------
@@ -164,17 +208,24 @@ class SiteIndisponivel(Exception):
     pass
 
 
+class LinkInvalido(Exception):
+    """O endereço não existe (erro 4xx): não adianta tentar de novo."""
+
+
 def baixar(url, timeout=60):
     """Baixa uma URL tentando até 3 vezes; se o site não responder, avisa sem quebrar."""
     ultimo_erro = None
     for tentativa in range(3):
         try:
             r = requests.get(url, headers=HEADERS, timeout=timeout)
+            if 400 <= r.status_code < 500 and r.status_code != 429:
+                raise LinkInvalido(f"{url}: HTTP {r.status_code}")
             r.raise_for_status()
             return r
         except requests.RequestException as e:
             ultimo_erro = e
-            time.sleep(20)
+            if tentativa < 2:
+                time.sleep(20)
     raise SiteIndisponivel(f"{url}: {ultimo_erro}")
 
 
@@ -185,48 +236,176 @@ class SiteMudou(Exception):
 def dados_da_pagina(url=DOM_HOME):
     """O site novo do DOM (PUBLIQ-DOM) guarda os dados da página num JSON, no atributo
     data-page do <div id="app">. Devolve o dicionário 'props' desse JSON."""
-    html = baixar(url).text
+    try:
+        html = baixar(url).text
+    except LinkInvalido as e:
+        raise SiteMudou(f"a página do DOM não abriu ({e})")
     m = re.search(r'<div[^>]*\bid="app"[^>]*\bdata-page="([^"]*)"', html) or \
         re.search(r'<div[^>]*\bdata-page="([^"]*)"[^>]*\bid="app"', html)
     if not m:
         raise SiteMudou("não encontrei o bloco data-page na página do DOM")
-    return json.loads(html_lib.unescape(m.group(1))).get("props", {})
+    try:
+        return json.loads(html_lib.unescape(m.group(1))).get("props", {}) or {}
+    except (ValueError, AttributeError) as e:
+        raise SiteMudou(f"o bloco data-page da página do DOM não é um JSON válido ({e})")
 
 
-def url_pdf_da_edicao(item):
+def data_de_hoje():
+    """Data de hoje em Salvador (UTC-3), no formato AAAA-MM-DD."""
+    return (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%Y-%m-%d")
+
+
+def url_pdf_do_dia(data, tipo="ordinaria", seq=1):
+    """PDF consolidado de um dia no site novo, ex.: /diario/dia/pdf?data=2026-11-11.
+    Edições extras ou suplementares do mesmo dia levam o tipo e a sequência."""
+    tipo, seq = tipo or "ordinaria", int(seq or 1)
+    url = f"{DOM_SITE}/diario/dia/pdf?data={data}"
+    if tipo != "ordinaria" or seq > 1:
+        url += f"&tipo_edicao={tipo}&sequencia_edicao={seq}"
+    return url
+
+
+def links_pdf_da_edicao(item):
+    """Endereços possíveis do PDF de uma edição, do mais provável para o menos provável."""
+    links = []
     if item.get("pdf_url"):
-        return item["pdf_url"]
+        links.append(urljoin(DOM_SITE + "/", str(item["pdf_url"])))
     codigo = item.get("documento_legado_codigo") or item.get("codigo_publico")
     if codigo:
-        return f"{DOM_SITE}/diario/arquivo/{codigo}/pdf"
-    if item.get("id") and item.get("origem") not in ("legado", "atos"):
-        return f"{DOM_SITE}/diario/edicao/{item['id']}/pdf"
-    return None
+        links.append(f"{DOM_SITE}/diario/arquivo/{codigo}/pdf")       # edições do acervo antigo
+    elif item.get("origem") != "atos":
+        data = str(item.get("data_publicacao") or item.get("data_edicao") or "")[:10]
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", data):                  # edições do sistema novo
+            links.append(url_pdf_do_dia(data, item.get("tipo_edicao"), item.get("sequencia_edicao")))
+        id_edicao = item.get("edicao_diario_id") or (item.get("id") if item.get("origem") not in ("legado", "publicacao") else None)
+        if id_edicao:
+            links.append(f"{DOM_SITE}/diario/edicao/{id_edicao}/pdf")
+    return links
+
+
+def cabecalhos_do_link(url):
+    """Status e cabeçalhos de um link, sem baixar o arquivo inteiro."""
+    try:
+        r = requests.head(url, headers=HEADERS, timeout=90, allow_redirects=True)
+        if r.status_code == 405:                                         # HEAD não aceito
+            r = requests.get(url, headers=HEADERS, timeout=90, stream=True)
+            r.close()
+        return r.status_code, r.headers
+    except requests.RequestException:
+        return None, {}
+
+
+def edicao_do_dia_direto(data):
+    """Plano B, sem depender do JSON da página: pergunta direto pelo PDF do dia.
+    O site devolve 404 enquanto a edição não sai e o nome 'DOM-9388.pdf' quando sai."""
+    url = url_pdf_do_dia(data)
+    status, cab = cabecalhos_do_link(url)
+    if status != 200 or "pdf" not in cab.get("content-type", "").lower():
+        return None
+    m = re.search(r"DOM[-_ ]?(\d{3,6})", cab.get("content-disposition", ""), re.I)
+    if m:
+        numero = int(m.group(1))
+    else:                                    # sem nome no cabeçalho: lê o nº na capa do PDF
+        try:
+            import pypdfium2 as pdfium
+            pdf = pdfium.PdfDocument(baixar(url, timeout=180).content)
+            capa = pdf[0].get_textpage().get_text_range()
+            pdf.close()
+            m = re.search(r"N\s*[º°o]\s*(\d\.?\d{3})", capa)
+            numero = int(m.group(1).replace(".", "")) if m else None
+        except Exception:
+            numero = None
+    if not numero:
+        return None
+    return {"numero": numero, "seq": 1, "tipo": "ordinaria", "data": data, "pdfs": [url]}
 
 
 def edicoes_recentes():
     """Edições recentes do DOM, da mais antiga para a mais nova:
-    [{'numero': 9387, 'seq': 1, 'tipo': 'ordinaria', 'data': '2026-11-10', 'pdf': url}, ...]"""
-    props = dados_da_pagina()
+    [{'numero': 9388, 'seq': 1, 'tipo': 'ordinaria', 'data': '2026-11-11',
+      'pdf': url, 'pdfs': [url, outros endereços possíveis]}, ...]"""
+    edicoes = {}
+
+    def juntar(numero, seq, tipo, data, links):
+        if not numero or not links:
+            return                        # ex.: bloco "leis e decretos" sem PDF próprio
+        chave = (int(numero), int(seq or 1))
+        ed = edicoes.setdefault(chave, {"numero": chave[0], "seq": chave[1], "tipo": tipo or "ordinaria",
+                                        "data": data or "", "pdfs": []})
+        ed["data"] = ed["data"] or data or ""
+        ed["pdfs"] += [l for l in links if l not in ed["pdfs"]]
+
+    erro_pagina = None
+    try:
+        props = dados_da_pagina()
+    except SiteMudou as e:
+        erro_pagina, props = e, {}
+
+    # Publicações do dia: trazem o id interno da edição (link /diario/edicao/<id>/pdf)
+    do_dia = {}
+    for pub in props.get("publicacoes") or []:
+        if isinstance(pub, dict) and pub.get("numero_edicao"):
+            do_dia.setdefault((int(pub["numero_edicao"]), int(pub.get("sequencia_edicao") or 1)), pub)
+
     itens = []
     for e in props.get("recentEditions") or []:
+        if not isinstance(e, dict):
+            continue
         itens.append(e)
         for sup in e.get("edicoes_suplementares") or []:
             if isinstance(sup, dict):
-                itens.append({"data_publicacao": e.get("data_publicacao"), **sup})
-    itens += props.get("acervo_legado") or []
-    edicoes = {}
+                itens.append({"data_publicacao": e.get("data_publicacao"), "numero_edicao": e.get("numero_edicao"),
+                              "origem": e.get("origem"), **sup})
+    itens += [x for x in props.get("acervo_legado") or [] if isinstance(x, dict)]
     for it in itens:
-        numero = it.get("numero_edicao")
-        pdf = url_pdf_da_edicao(it)
-        if not numero or not pdf:
-            continue                       # ex.: bloco "leis e decretos" sem PDF próprio
-        chave = (int(numero), int(it.get("sequencia_edicao") or 1))
-        edicoes[chave] = {"numero": chave[0], "seq": chave[1], "tipo": it.get("tipo_edicao") or "ordinaria",
-                          "data": it.get("data_publicacao") or it.get("data_edicao") or "", "pdf": pdf}
+        numero, seq = it.get("numero_edicao"), int(it.get("sequencia_edicao") or 1)
+        if not numero:
+            continue
+        links = links_pdf_da_edicao(it)
+        pub = do_dia.get((int(numero), seq))
+        if pub and pub.get("edicao_diario_id") and not (it.get("documento_legado_codigo") or it.get("codigo_publico")):
+            links.append(f"{DOM_SITE}/diario/edicao/{pub['edicao_diario_id']}/pdf")
+        juntar(numero, seq, it.get("tipo_edicao"),
+               str(it.get("data_publicacao") or it.get("data_edicao") or "")[:10], links)
+    for (numero, seq), pub in do_dia.items():
+        data = str(pub.get("data_publicacao") or props.get("date") or "")[:10]
+        links = [url_pdf_do_dia(data, pub.get("tipo_edicao"), seq)] if re.fullmatch(r"\d{4}-\d{2}-\d{2}", data) else []
+        if pub.get("edicao_diario_id"):
+            links.append(f"{DOM_SITE}/diario/edicao/{pub['edicao_diario_id']}/pdf")
+        juntar(numero, seq, pub.get("tipo_edicao"), data, links)
+
+    # Plano B: se a página não listou a edição de hoje, pergunta direto pelo PDF do dia
+    hoje = data_de_hoje()
+    if not any(ed["data"] == hoje for ed in edicoes.values()):
+        direto = edicao_do_dia_direto(hoje)
+        if direto:
+            print(f"AVISO: a página do DOM não listou a edição de hoje; achei pelo link direto (nº {direto['numero']}).")
+            juntar(direto["numero"], 1, "ordinaria", hoje, direto["pdfs"])
+
     if not edicoes:
-        raise SiteMudou("a página do DOM não listou nenhuma edição com PDF")
-    return [edicoes[k] for k in sorted(edicoes)]
+        raise erro_pagina or SiteMudou("a página do DOM não listou nenhuma edição com PDF")
+    if erro_pagina:
+        print(f"AVISO: {erro_pagina}. Seguindo com o link direto do PDF do dia.")
+    lista = [edicoes[k] for k in sorted(edicoes)]
+    for ed in lista:
+        ed["pdf"] = ed["pdfs"][0]
+    return lista
+
+
+def baixar_pdf_da_edicao(ed):
+    """Tenta cada endereço possível da edição até receber um PDF. Atualiza ed['pdf']."""
+    falhas = []
+    for url in ed["pdfs"]:
+        try:
+            conteudo = baixar(url, timeout=180).content
+        except LinkInvalido as e:
+            falhas.append(str(e))
+            continue
+        if conteudo.startswith(b"%PDF"):
+            ed["pdf"] = url
+            return conteudo
+        falhas.append(f"{url}: não é PDF")
+    raise SiteMudou(f"nenhum link da edição {ed['numero']} devolveu o PDF ({'; '.join(falhas)})")
 
 
 def ler_estado():
@@ -328,15 +507,64 @@ def linhas_de_palavras(palavras):
     return [" ".join(w["text"] for w in sorted(l["ws"], key=lambda w: w["x0"])) for l in linhas]
 
 
+# Algumas tabelas do PDF novo usam uma fonte com os algarismos em "códigos privados" (U+E000 a
+# U+F8FF): o pdfplumber lê "\ue072\ue071" onde está escrito "10". O pdfium decodifica certo,
+# então o bot pergunta ao pdfium qual caractere está naquela posição da página.
+RE_PUA = re.compile("[\ue000-\uf8ff]")
+PUA_PADRAO = {**{chr(0xE071 + i): str(i) for i in range(10)}, "\ue094": "."}   # visto no DOM 9.388
+
+
+def aprender_pua(doc_pdfium, n, page, mapa):
+    """Completa o mapa {código privado: caractere real} com os caracteres da página n."""
+    pua = [c for c in page.chars if RE_PUA.search(c.get("text", ""))]
+    if not pua or all(c["text"] in mapa for c in pua):
+        return
+    votos = {}
+    pagina = doc_pdfium[n - 1]
+    tp = pagina.get_textpage()
+    altura = pagina.get_height()
+    try:
+        for c in pua[:600]:
+            if c["text"] in mapa:
+                continue
+            x = (c["x0"] + c["x1"]) / 2
+            y = altura - (c["top"] + c["bottom"]) / 2
+            i = tp.get_index(x, y, 1.5, 1.5)
+            if i is None or i < 0:
+                continue
+            real = tp.get_text_range(i, 1)
+            if real and real.strip() and not RE_PUA.search(real):
+                votos.setdefault(c["text"], {}).setdefault(real, 0)
+                votos[c["text"]][real] += 1
+    finally:
+        tp.close()
+        pagina.close()
+    for cod, conta in votos.items():
+        mapa[cod] = max(conta, key=conta.get)
+
+
 def ler_pdf(conteudo):
     """Retorna lista de (nº da página, linha) na ordem de leitura.
     Cada palavra vai inteira para a coluna onde COMEÇA, para não cortar palavras
     que ultrapassam um pouco o espaço entre colunas."""
     linhas = []
+    mapa_pua, doc_pdfium = {}, None
     with pdfplumber.open(io.BytesIO(conteudo)) as pdf:
         for n, page in enumerate(pdf.pages, start=1):
             colunas = colunas_da_pagina(page)
             palavras = page.extract_words()
+            if any(RE_PUA.search(w["text"]) for w in palavras):
+                try:
+                    if doc_pdfium is None:
+                        import pypdfium2 as pdfium
+                        doc_pdfium = pdfium.PdfDocument(conteudo)
+                    aprender_pua(doc_pdfium, n, page, mapa_pua)
+                except Exception as e:
+                    print(f"AVISO: não consegui decodificar os números da pág. {n} ({e}).")
+                for w in palavras:
+                    if RE_PUA.search(w["text"]):
+                        w["text"] = RE_PUA.sub(lambda m: mapa_pua.get(m.group(0)) or PUA_PADRAO.get(m.group(0), ""),
+                                               w["text"])
             for tipo, y0, y1 in faixas_da_pagina(page, colunas):
                 faixa = [w for w in palavras if y0 <= w["top"] < y1]
                 if not faixa:
@@ -349,6 +577,8 @@ def ler_pdf(conteudo):
                         l = l.strip()
                         if l and not any(r.match(l) for r in RE_CABECALHO):
                             linhas.append((n, l))
+    if doc_pdfium is not None:
+        doc_pdfium.close()
     return linhas
 
 
@@ -391,7 +621,7 @@ def mencoes_equipe(conteudo, atos_equipe):
     for n in range(len(pdf)):
         pagina = pdf[n]
         tp = pagina.get_textpage()
-        textos_paginas.append(tp.get_text_range())
+        textos_paginas.append(tp.get_text_range().replace("\ufffe", ""))
         tp.close()
         pagina.close()
     pdf.close()
@@ -461,7 +691,7 @@ def pessoal_semit(conteudo):
     for n in range(len(pdf)):
         pagina = pdf[n]
         tp = pagina.get_textpage()
-        textos.append(tp.get_text_range())
+        textos.append(texto_corrido_pdfium(tp.get_text_range()))
         tp.close()
         pagina.close()
     pdf.close()
@@ -526,16 +756,34 @@ def separar_atos(linhas):
     i = 0
     while i < len(linhas):
         pag, l = linhas[i]
+        # Grandes seções ("EXECUTIVO", "LICITAÇÕES"...) e blocos de decretos/leis do Prefeito
+        if RE_SECAO_DOM.match(l) or RE_GRUPO_DECRETOS.match(l):
+            orgao = ORGAO_PREFEITO if RE_GRUPO_DECRETOS.match(l) else ""
+            atual = None
+            i += 1
+            continue
+        # Decreto ou lei do Prefeito: cada um é um ato (ex.: "DECRETO Nº 42.585 de 10 de novembro de 2026")
+        if orgao == ORGAO_PREFEITO and RE_TITULO_DECRETO.match(l):
+            atual = {"topico": "outros", "titulo": l, "orgao": orgao, "pagina": pag, "linhas": []}
+            atos.append(atual)
+            i += 1
+            continue
         # Cabeçalho de órgão (pode quebrar a sigla na linha seguinte)
         if len(l) < 130 and not re.search(r"\d", l) and \
-                ((maiusculo(l) and RE_ORGAO.match(l)) or RE_ORGAO_MISTO.match(l)):
+                ((maiusculo(l) and (RE_ORGAO.match(l) or RE_ORGAO_SIGLA.match(l))) or RE_ORGAO_MISTO.match(l)):
             nome = l
             extras = 0
             while (extras < 3 and i + 1 < len(linhas) and not re.search(r"-\s*[A-Z]{2,12}$", nome)
                    and maiusculo(linhas[i + 1][1]) and len(linhas[i + 1][1]) < 90
                    and not re.search(r"\d", linhas[i + 1][1])
                    and not any(rx.match(linhas[i + 1][1]) for _, _, rx in TOPICOS_RE)):
-                nome = nome.rstrip() + " " + linhas[i + 1][1].strip()
+                prox = linhas[i + 1][1].strip()
+                nome = nome.rstrip()
+                if nome.endswith(("-",) + HIFENS_QUEBRA) and len(nome) > 1 and nome[-2].isalpha() \
+                        and not re.fullmatch(r"[A-Z]{2,12}", prox):
+                    nome = nome[:-1] + prox          # palavra quebrada: "TECNOLO-" + "GIA - SEMIT"
+                else:
+                    nome = nome + " " + prox
                 i += 1
                 extras += 1
             nome = re.sub(r"\s*[-–]\s*([A-Z]{2,12})$", r" - \1", nome)
@@ -579,7 +827,7 @@ def separar_atos(linhas):
             atual = continuar_ou_abrir_orfao(atos, atual, orgao, pag, l)
         i += 1
     for a in atos:
-        a["texto"] = re.sub(r"\s+", " ", " ".join(a["linhas"])).strip()
+        a["texto"] = juntar_linhas(a["linhas"])
         if a.get("orfao"):
             a["topico"] = topico_por_conteudo(a["texto"], a["titulo"])
         m = re.search(r"-\s*([A-Z]{2,12})$", a["orgao"])
@@ -641,7 +889,7 @@ def compras_por_ata(linhas, todos, atos):
     for p, l in linhas:
         paginas.setdefault(p, []).append(l)
     for p, ls in paginas.items():
-        texto = re.sub(r"\s+", " ", " ".join(ls))
+        texto = juntar_linhas(ls)
         for m in RE_USO_ATA.finditer(texto):
             trecho = m.group(0)
             dono = "SEMIT" if re.search(r"SEMIT|Inova", m.group(1), re.I) else "SMART"
@@ -1270,9 +1518,7 @@ def executar():
         return
     for ed in pendentes:
         print(f"\n>>> Processando edição nº {ed['numero']} ({ed['data']}): {ed['pdf']}")
-        conteudo = baixar(ed["pdf"], timeout=180).content
-        if not conteudo.startswith(b"%PDF"):
-            raise SiteMudou(f"o link da edição {ed['numero']} não devolveu um PDF")
+        conteudo = baixar_pdf_da_edicao(ed)
         mensagem = gerar_mensagem(ed["pdf"], conteudo, ed)
         if teste:
             # Modo teste: mostra a mensagem no log e não envia nem registra a edição
